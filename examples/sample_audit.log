@@ -1,0 +1,141 @@
+╔════════════════════════════════════════════════════════════════╗
+║              SERVER AUDIT REPORT                               ║
+║              2025-01-15 14:32:10 UTC                          ║
+╚════════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[SYSTEM IDENTITY]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Hostname
+web-server-prod-01
+
+→ Operating System
+NAME="Ubuntu"
+VERSION="22.04.3 LTS (Jammy Jellyfish)"
+ID=ubuntu
+ID_LIKE=debian
+PRETTY_NAME="Ubuntu 22.04.3 LTS"
+VERSION_ID="22.04"
+
+→ Kernel Version
+5.15.0-89-generic
+
+→ System Uptime
+up 42 days, 3 hours, 15 minutes
+
+→ Current Date/Time
+Mon Jan 15 14:32:10 UTC 2025
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[NETWORK CONFIGURATION]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Network Interfaces
+lo               UNKNOWN        127.0.0.1/8 ::1/128
+eth0             UP             192.168.1.100/24 fe80::a00:27ff:fe4e:66a1/64
+
+→ Routing Table
+default via 192.168.1.1 dev eth0 proto dhcp src 192.168.1.100 metric 100
+192.168.1.0/24 dev eth0 proto kernel scope link src 192.168.1.100
+
+→ DNS Configuration
+nameserver 8.8.8.8
+nameserver 8.8.4.4
+
+→ Active Connections
+Netid State   Recv-Q Send-Q Local Address:Port Peer Address:Port Process
+tcp   LISTEN  0      128    0.0.0.0:22          0.0.0.0:*
+tcp   LISTEN  0      511    0.0.0.0:80          0.0.0.0:*
+tcp   LISTEN  0      511    0.0.0.0:443         0.0.0.0:*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[USER ACCOUNTS]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ All User Accounts
+root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+sys:x:3:3:sys:/dev:/usr/sbin/nologin
+ubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash
+admin:x:1001:1001:Admin User:/home/admin:/bin/bash
+
+→ User Groups
+root:x:0:
+daemon:x:1:
+bin:x:2:
+sys:x:3:
+sudo:x:27:ubuntu,admin
+ubuntu:x:1000:
+admin:x:1001:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[SSH CONFIGURATION]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ SSH Server Config
+Port 22
+PermitRootLogin no
+PubkeyAuthentication yes
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM yes
+X11Forwarding yes
+PrintMotd no
+AcceptEnv LANG LC_*
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[FIREWALL & SECURITY]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ UFW Status
+Status: active
+
+To                         Action      From
+--                         ------      ----
+22/tcp                     ALLOW       Anywhere
+80/tcp                     ALLOW       Anywhere
+443/tcp                    ALLOW       Anywhere
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[INSTALLED PACKAGES]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Installed Packages (dpkg)
+ii  adduser         3.118ubuntu5    all     add and remove users and groups
+ii  apt             2.4.10          amd64   commandline package manager
+ii  bash            5.1-6ubuntu1    amd64   GNU Bourne Again SHell
+ii  curl            7.81.0-1ubuntu1 amd64   command line tool for transferring data
+ii  nginx           1.18.0-6ubuntu1 all     small, powerful web server
+ii  openssh-server  1:8.9p1-3ubuntu amd64   secure shell (SSH) server
+ii  ufw             0.36.1-4build1  all     program for managing a Netfilter firewall
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[DISK & MEMORY USAGE]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Disk Usage
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1       500G  225G  250G  45% /
+/dev/sdb1       1.0T  780G  195G  78% /mnt/data
+tmpfs           7.8G  1.2M  7.8G   1% /run
+
+→ Memory Usage
+               total        used        free      shared  buff/cache   available
+Mem:            15Gi       4.2Gi       8.5Gi       124Mi       2.8Gi        10Gi
+Swap:          2.0Gi          0B       2.0Gi
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[RUNNING SERVICES]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Systemd Services
+  cron.service                  loaded active running Regular background program processing daemon
+  nginx.service                 loaded active running A high performance web server
+  ssh.service                   loaded active running OpenBSD Secure Shell server
+  systemd-journald.service      loaded active running Journal Service
+  ufw.service                   loaded active exited  Uncomplicated firewall
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[RECENT ERRORS & LOGS]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+→ Recent Syslog Errors
+Jan 15 10:23:45 web-server-prod-01 systemd[1]: Failed to start example.service
+Jan 15 12:15:33 web-server-prod-01 kernel: [12345.678901] EXT4-fs warning: mounting fs with errors
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Audit completed at: Mon Jan 15 14:32:35 UTC 2025
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

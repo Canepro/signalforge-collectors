@@ -1,0 +1,38 @@
+name: ShellCheck Linting
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  shellcheck:
+    name: Run ShellCheck
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run ShellCheck on all scripts
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: '.'
+          severity: warning
+          format: tty
+        env:
+          SHELLCHECK_OPTS: -x -s bash
+      
+      - name: Verify script executability
+        run: |
+          echo "Checking if scripts are executable..."
+          if [ ! -x first-audit.sh ]; then
+            echo "❌ first-audit.sh is not executable"
+            exit 1
+          fi
+          if [ ! -x diff-audit.sh ]; then
+            echo "❌ diff-audit.sh is not executable"
+            exit 1
+          fi
+          echo "✓ All scripts are executable"
