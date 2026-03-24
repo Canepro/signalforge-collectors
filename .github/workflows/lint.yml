@@ -35,4 +35,15 @@ jobs:
             echo "❌ diff-audit.sh is not executable"
             exit 1
           fi
+          if [ ! -x submit-to-signalforge.sh ]; then
+            echo "❌ submit-to-signalforge.sh is not executable"
+            exit 1
+          fi
+          if [ ! -x tests/validate-submit-script.sh ]; then
+            echo "❌ tests/validate-submit-script.sh is not executable"
+            exit 1
+          fi
           echo "✓ All scripts are executable"
+
+      - name: Validate submit-to-signalforge reference script
+        run: ./tests/validate-submit-script.sh
