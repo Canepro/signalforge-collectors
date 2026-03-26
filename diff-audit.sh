@@ -12,7 +12,6 @@ set -euo pipefail
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
 readonly YELLOW='\033[1;33m'
-readonly BLUE='\033[0;34m'
 readonly CYAN='\033[0;36m'
 readonly NC='\033[0m'
 readonly BOLD='\033[1m'
@@ -60,8 +59,10 @@ compare_section() {
     local baseline="$2"
     local current="$3"
     
-    local baseline_section=$(mktemp)
-    local current_section=$(mktemp)
+    local baseline_section
+    local current_section
+    baseline_section=$(mktemp)
+    current_section=$(mktemp)
     
     extract_section "$baseline" "$section_name" > "$baseline_section"
     extract_section "$current" "$section_name" > "$current_section"
@@ -91,14 +92,18 @@ analyze_user_changes() {
     local baseline="$1"
     local current="$2"
     
-    local baseline_users=$(mktemp)
-    local current_users=$(mktemp)
+    local baseline_users
+    local current_users
+    baseline_users=$(mktemp)
+    current_users=$(mktemp)
     
     extract_section "$baseline" "USER ACCOUNTS" | grep -E "^[^:]+:[^:]+:[0-9]+:" | cut -d: -f1 | sort > "$baseline_users" || true
     extract_section "$current" "USER ACCOUNTS" | grep -E "^[^:]+:[^:]+:[0-9]+:" | cut -d: -f1 | sort > "$current_users" || true
     
-    local new_users=$(comm -13 "$baseline_users" "$current_users")
-    local removed_users=$(comm -23 "$baseline_users" "$current_users")
+    local new_users
+    local removed_users
+    new_users=$(comm -13 "$baseline_users" "$current_users")
+    removed_users=$(comm -23 "$baseline_users" "$current_users")
     
     if [ -n "$new_users" ] || [ -n "$removed_users" ]; then
         print_section_header "USER ACCOUNT CHANGES"
@@ -127,15 +132,19 @@ analyze_package_changes() {
     local baseline="$1"
     local current="$2"
     
-    local baseline_pkgs=$(mktemp)
-    local current_pkgs=$(mktemp)
+    local baseline_pkgs
+    local current_pkgs
+    baseline_pkgs=$(mktemp)
+    current_pkgs=$(mktemp)
     
     # Extract package names (works for both dpkg and rpm formats)
     extract_section "$baseline" "INSTALLED PACKAGES" | grep -E "^(ii|[a-zA-Z0-9])" | awk '{print $2}' | sort | uniq > "$baseline_pkgs" || true
     extract_section "$current" "INSTALLED PACKAGES" | grep -E "^(ii|[a-zA-Z0-9])" | awk '{print $2}' | sort | uniq > "$current_pkgs" || true
     
-    local new_packages=$(comm -13 "$baseline_pkgs" "$current_pkgs" | head -20)
-    local removed_packages=$(comm -23 "$baseline_pkgs" "$current_pkgs" | head -20)
+    local new_packages
+    local removed_packages
+    new_packages=$(comm -13 "$baseline_pkgs" "$current_pkgs" | head -20)
+    removed_packages=$(comm -23 "$baseline_pkgs" "$current_pkgs" | head -20)
     
     if [ -n "$new_packages" ] || [ -n "$removed_packages" ]; then
         print_section_header "PACKAGE CHANGES"
@@ -166,8 +175,10 @@ analyze_disk_changes() {
     
     print_section_header "DISK USAGE COMPARISON"
     
-    local baseline_disk=$(mktemp)
-    local current_disk=$(mktemp)
+    local baseline_disk
+    local current_disk
+    baseline_disk=$(mktemp)
+    current_disk=$(mktemp)
     
     extract_section "$baseline" "DISK & MEMORY USAGE" | grep -A 20 "Disk Usage" | grep "^/" > "$baseline_disk" || true
     extract_section "$current" "DISK & MEMORY USAGE" | grep -A 20 "Disk Usage" | grep "^/" > "$current_disk" || true
@@ -178,12 +189,16 @@ analyze_disk_changes() {
         echo "───────────────────────────────────────────────────────"
         
         while IFS= read -r baseline_line; do
-            local fs=$(echo "$baseline_line" | awk '{print $1}')
-            local baseline_usage=$(echo "$baseline_line" | awk '{print $5}' | tr -d '%')
-            local current_line=$(grep "^$fs " "$current_disk" || true)
+            local fs
+            local baseline_usage
+            local current_line
+            fs=$(echo "$baseline_line" | awk '{print $1}')
+            baseline_usage=$(echo "$baseline_line" | awk '{print $5}' | tr -d '%')
+            current_line=$(grep "^$fs " "$current_disk" || true)
             
             if [ -n "$current_line" ]; then
-                local current_usage=$(echo "$current_line" | awk '{print $5}' | tr -d '%')
+                local current_usage
+                current_usage=$(echo "$current_line" | awk '{print $5}' | tr -d '%')
                 local change=$((current_usage - baseline_usage))
                 
                 if [ "$change" -gt 5 ]; then
@@ -207,14 +222,18 @@ analyze_service_changes() {
     local baseline="$1"
     local current="$2"
     
-    local baseline_services=$(mktemp)
-    local current_services=$(mktemp)
+    local baseline_services
+    local current_services
+    baseline_services=$(mktemp)
+    current_services=$(mktemp)
     
     extract_section "$baseline" "RUNNING SERVICES" | grep "\.service" | awk '{print $1}' | sort | uniq > "$baseline_services" || true
     extract_section "$current" "RUNNING SERVICES" | grep "\.service" | awk '{print $1}' | sort | uniq > "$current_services" || true
     
-    local new_services=$(comm -13 "$baseline_services" "$current_services")
-    local stopped_services=$(comm -23 "$baseline_services" "$current_services")
+    local new_services
+    local stopped_services
+    new_services=$(comm -13 "$baseline_services" "$current_services")
+    stopped_services=$(comm -23 "$baseline_services" "$current_services")
     
     if [ -n "$new_services" ] || [ -n "$stopped_services" ]; then
         print_section_header "SERVICE CHANGES"
