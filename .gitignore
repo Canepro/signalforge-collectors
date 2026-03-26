@@ -1,5 +1,7 @@
 # Generated audit log files
 server_audit_*.log
+container_diagnostics_*.txt
+kubernetes_bundle_*.json
 
 # Temporary files
 *.tmp

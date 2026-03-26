@@ -1,6 +1,6 @@
 # SignalForge Collectors
 
-Collector **implementations** for [SignalForge](https://github.com/Canepro/signalforge) — scripts that gather infrastructure evidence on a host. SignalForge analyzes the artifacts; this repo produces them.
+Collector **implementations** for [SignalForge](https://github.com/Canepro/signalforge) — scripts that gather infrastructure evidence on or near the target. SignalForge analyzes the artifacts; this repo produces them.
 
 | Repo | Role |
 |------|------|
@@ -10,24 +10,27 @@ Collector **implementations** for [SignalForge](https://github.com/Canepro/signa
 
 ## Purpose
 
-This toolkit provides automated scripts to:
-- Collect detailed system information (identity, network, users, security, services, resources)
-- Save audit snapshots with timestamps
-- Compare audits to detect changes (new users, modified services, disk usage trends)
+This toolkit provides scripts to:
+- collect Linux host audit evidence
+- collect runtime-oriented container diagnostics
+- collect normalized Kubernetes evidence bundles
+- push those artifacts into SignalForge over the external submit contract
+- compare Linux audit snapshots to detect changes
 
-Perfect for:
-- Initial server security audits
-- Configuration drift detection
-- Compliance and documentation
-- Change tracking in production environments
+Good fits:
+- initial server security audits
+- container runtime posture checks
+- Kubernetes evidence capture for diagnostics and drift review
+- compliance and documentation
+- change tracking in production environments
 
 ## Features
 
-- **Comprehensive audit**: System identity, networking, users, SSH config, firewall rules, installed packages, disk/memory usage, running services, and recent errors
-- **Timestamped logs**: Each audit saved with ISO 8601 timestamp
-- **Beautiful terminal output**: Color-coded section headers for quick visual inspection
-- **Differential analysis**: Compare any two audit logs to highlight changes
-- **Modular design**: Clean, well-commented Bash functions
+- **Linux host audit**: System identity, networking, users, SSH config, firewall rules, installed packages, disk and memory usage, running services, and recent errors
+- **Container diagnostics**: Runtime, identity, ports, privilege signals, mounts, secrets, and root filesystem posture for one container
+- **Kubernetes bundle export**: Normalized `kubernetes-bundle.v1` manifest built from `kubectl` JSON
+- **Push-first submission**: One wrapper for multipart upload and ingestion metadata
+- **Differential analysis**: Compare Linux audit snapshots to highlight changes
 
 ## Usage
 
@@ -49,6 +52,39 @@ This will:
 2. Save results to `server_audit_YYYYMMDD_HHMMSS.log`
 3. Display a formatted summary in the terminal
 
+### Collect Container Diagnostics
+
+```bash
+./collect-container-diagnostics.sh --container payments-api
+```
+
+This writes a `container_diagnostics_<container>_<timestamp>.txt` artifact in the text format SignalForge already accepts as `container-diagnostics`.
+
+Useful options:
+
+```bash
+./collect-container-diagnostics.sh --runtime podman --container payments-api --output ./payments-container.txt
+./submit-to-signalforge.sh --file ./payments-container.txt --artifact-type container-diagnostics --target-id 'container-workload:host-a:podman:payments-api' --source-label 'signalforge-collectors:collect-container-diagnostics.sh'
+```
+
+### Collect Kubernetes Evidence
+
+```bash
+./collect-kubernetes-bundle.sh --namespace payments
+```
+
+This writes a `kubernetes_bundle_<scope>_<timestamp>.json` artifact in the `kubernetes-bundle.v1` format expected by SignalForge.
+
+Useful options:
+
+```bash
+./collect-kubernetes-bundle.sh --scope cluster --provider aks --output ./cluster-bundle.json
+./submit-to-signalforge.sh --file ./cluster-bundle.json --artifact-type kubernetes-bundle --target-id 'cluster:aks-prod-eu-1' --source-label 'signalforge-collectors:collect-kubernetes-bundle.sh'
+./submit-to-signalforge.sh --file ./payments-bundle.json --artifact-type kubernetes-bundle --target-id 'cluster:aks-prod-eu-1:namespace:payments' --source-label 'signalforge-collectors:collect-kubernetes-bundle.sh'
+```
+
+Kubernetes collection is currently an honest push-first path. It does not imply that every environment already has a job-driven agent deployment for Kubernetes collection.
+
 ### Push audit to SignalForge (reference collector)
 
 **SignalForge** (separate product repo) analyzes audit logs; it does **not** run collectors on your hosts. This repo includes a **narrow reference path** that matches the external multipart contract (`POST /api/runs`):
@@ -61,9 +97,14 @@ export SIGNALFORGE_URL=http://localhost:3000   # must match where SignalForge li
 ./submit-to-signalforge.sh --file ./server_audit_20250115_143210.log
 ```
 
-Optional: `./submit-to-signalforge.sh --url http://127.0.0.1:3000 --target-id my-fleet-key`
+Optional:
 
-The script runs `first-audit.sh` (unless `--file` is set), then uploads with ingestion metadata (`target_identifier`, `source_label`, `collector_type`, `collector_version`, `collected_at`). Same HTTP contract can be reused later for **Kubernetes bundles**, **container diagnostics**, **Windows/macOS** evidence, or other platforms — swap what produces the artifact; keep the push + metadata pattern.
+```bash
+./submit-to-signalforge.sh --url http://127.0.0.1:3000 --target-id my-fleet-key
+./submit-to-signalforge.sh --file ./artifact.json --artifact-type kubernetes-bundle --source-label custom-k8s-export
+```
+
+The script runs `first-audit.sh` by default, or uploads an existing artifact with explicit metadata (`artifact_type`, `target_identifier`, `source_label`, `collector_type`, `collector_version`, `collected_at`). Linux, container, and Kubernetes collectors in this repo all reuse that same push path.
 
 See SignalForge **`docs/external-submit.md`** in that repository for field definitions. In the SignalForge UI, **Collect externally** shows a copy-paste block with your current app origin as `SIGNALFORGE_URL`.
 
@@ -73,10 +114,15 @@ For **automated** collection, use [signalforge-agent](https://github.com/Canepro
 
 1. Authenticates with a **source-bound** agent token from SignalForge
 2. Heartbeats and polls for queued **collection jobs**
-3. Runs `first-audit.sh` from **this repo** on the host
+3. Runs a collector from **this repo**
 4. Uploads the artifact back to SignalForge automatically
 
-The agent orchestrates the HTTP lifecycle (claim → start → collect → upload → fail); this repo provides only the collector scripts. See the [signalforge-agent README](https://github.com/Canepro/signalforge-agent) for setup.
+The agent orchestrates the HTTP lifecycle (claim → start → collect → upload → fail); this repo provides only the collector scripts. The current agent can now dispatch Linux, container, and Kubernetes collectors from a host install, but container and Kubernetes jobs still depend on host-local environment and scope preparation. In practice that means:
+
+- Linux host collection is the cleanest end-to-end job-driven path today
+- container collection needs the agent host to be pinned to a specific container target, typically with `SIGNALFORGE_CONTAINER_REF`
+- Kubernetes collection needs the agent host to have the intended `kubectl` context and scope settings already in place
+- container image and Kubernetes-native agent deployment forms are still future packaging work, not shipped artifacts today
 
 ```bash
 # On the host, with signalforge-agent and signalforge-collectors both checked out:
@@ -143,8 +189,11 @@ Audit complete. Full log saved to: server_audit_20250115_143210.log
 ## Requirements
 
 - Bash 4.0+
-- Standard Linux utilities (systemctl, ss, iptables/ufw, df, etc.)
-- Root or sudo access recommended for complete information
+- Python 3 for JSON transformation in the container and Kubernetes collectors
+- Standard Linux utilities (`systemctl`, `ss`, `iptables` or `ufw`, `df`, etc.) for the Linux host audit
+- A supported container runtime (`podman` or `docker`) for `collect-container-diagnostics.sh`
+- `kubectl` with read access to the target cluster or namespace for `collect-kubernetes-bundle.sh`
+- Root or sudo access recommended for complete Linux host audit coverage
 
 ## File Structure
 
@@ -152,10 +201,13 @@ Audit complete. Full log saved to: server_audit_20250115_143210.log
 signalforge-collectors/
 ├── README.md                  # This file
 ├── first-audit.sh             # Main audit script
+├── collect-container-diagnostics.sh  # Container diagnostics exporter
+├── collect-kubernetes-bundle.sh      # Kubernetes bundle exporter
 ├── submit-to-signalforge.sh   # Reference push to SignalForge (optional)
 ├── diff-audit.sh              # Differential comparison script
 ├── tests/
-│   └── validate-submit-script.sh  # Static checks for submit script
+│   ├── validate-submit-script.sh    # Static checks for submit script
+│   └── validate-collector-scripts.sh # Mocked checks for container and Kubernetes collectors
 ├── .gitignore                 # Excludes generated logs
 ├── examples/                  # Sample audit logs
 │   └── sample_audit.log
