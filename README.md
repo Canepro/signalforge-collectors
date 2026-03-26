@@ -75,6 +75,11 @@ Useful options:
 
 This writes a `kubernetes_bundle_<scope>_<timestamp>.json` artifact in the `kubernetes-bundle.v1` format expected by SignalForge.
 
+The current bundle includes normalized service exposure, network policies, RBAC, workload specs and status, plus first operational diagnostics for:
+
+- warning events
+- node readiness and pressure conditions
+
 Useful options:
 
 ```bash

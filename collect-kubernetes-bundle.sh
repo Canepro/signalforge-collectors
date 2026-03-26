@@ -160,6 +160,8 @@ capture_json "$TMP_DIR/jobs.json" optional get jobs "${scope_args[@]}"
 capture_json "$TMP_DIR/cronjobs.json" optional get cronjobs "${scope_args[@]}"
 capture_json "$TMP_DIR/pods.json" optional get pods "${scope_args[@]}"
 capture_json "$TMP_DIR/replicasets.json" optional get replicasets "${scope_args[@]}"
+capture_json "$TMP_DIR/events.json" optional get events "${scope_args[@]}"
+capture_json "$TMP_DIR/nodes.json" optional get nodes
 capture_json "$TMP_DIR/clusterroles.json" optional get clusterroles
 capture_json "$TMP_DIR/clusterrolebindings.json" optional get clusterrolebindings
 
@@ -218,6 +220,8 @@ jobs_doc = load("jobs.json")
 cronjobs_doc = load("cronjobs.json")
 pods_doc = load("pods.json")
 replicasets_doc = load("replicasets.json")
+events_doc = load("events.json")
+nodes_doc = load("nodes.json")
 clusterroles_doc = load("clusterroles.json")
 clusterrolebindings_doc = load("clusterrolebindings.json")
 
@@ -254,6 +258,62 @@ for policy in items(network_policies_doc):
         {
             "namespace": metadata.get("namespace"),
             "name": metadata.get("name"),
+        }
+    )
+
+
+def condition_status(conditions, condition_type):
+    for condition in conditions or []:
+        if condition.get("type") != condition_type:
+            continue
+        status = str(condition.get("status") or "").strip().lower()
+        if status == "true":
+            return True
+        if status == "false":
+            return False
+    return None
+
+
+node_health = []
+for node in items(nodes_doc):
+    metadata = node.get("metadata") or {}
+    spec = node.get("spec") or {}
+    status = node.get("status") or {}
+    conditions = status.get("conditions") or []
+    pressure_conditions = []
+    for condition_name in ("MemoryPressure", "DiskPressure", "PIDPressure"):
+        if condition_status(conditions, condition_name) is True:
+            pressure_conditions.append(condition_name)
+
+    node_health.append(
+        {
+            "name": metadata.get("name"),
+            "ready": condition_status(conditions, "Ready"),
+            "unschedulable": bool(spec.get("unschedulable")),
+            "pressure_conditions": pressure_conditions,
+        }
+    )
+
+
+warning_events = []
+for event in items(events_doc):
+    if str(event.get("type") or "").strip().lower() != "warning":
+        continue
+    metadata = event.get("metadata") or {}
+    involved = event.get("regarding") or event.get("involvedObject") or {}
+    series = event.get("series") or {}
+    warning_events.append(
+        {
+            "namespace": metadata.get("namespace") or involved.get("namespace"),
+            "involved_kind": involved.get("kind"),
+            "involved_name": involved.get("name"),
+            "reason": event.get("reason"),
+            "message": event.get("message"),
+            "count": event.get("count") or series.get("count") or 1,
+            "last_timestamp": event.get("eventTime")
+            or series.get("lastObservedTime")
+            or event.get("lastTimestamp")
+            or metadata.get("creationTimestamp"),
         }
     )
 
@@ -429,6 +489,30 @@ documents = [
         "kind": "rbac-roles",
         "media_type": "application/json",
         "content": json.dumps(sorted(rbac_roles, key=lambda row: (row.get("scope") or "", row.get("namespace") or "", row.get("name") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "cluster/node-health.json",
+        "kind": "node-health",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(node_health, key=lambda row: (row.get("name") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "events/warning-events.json",
+        "kind": "warning-events",
+        "media_type": "application/json",
+        "content": json.dumps(
+            sorted(
+                warning_events,
+                key=lambda row: (
+                    row.get("last_timestamp") or "",
+                    row.get("namespace") or "",
+                    row.get("involved_kind") or "",
+                    row.get("involved_name") or "",
+                    row.get("reason") or "",
+                ),
+            ),
+            separators=(",", ":"),
+        ),
     },
     {
         "path": "workloads/specs.json",

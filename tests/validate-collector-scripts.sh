@@ -171,6 +171,16 @@ JSON
 {"items":[{"metadata":{"namespace":"payments","name":"payments-api"},"spec":{"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}}}]}
 JSON
     ;;
+  '--context prod-eu-1 get events -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","creationTimestamp":"2026-03-26T10:00:00Z"},"type":"Warning","reason":"FailedScheduling","message":"0/3 nodes are available: 3 Insufficient memory.","count":4,"involvedObject":{"kind":"Pod","namespace":"payments","name":"payments-api-abc123"}},{"metadata":{"namespace":"payments","creationTimestamp":"2026-03-26T10:05:00Z"},"type":"Warning","reason":"ImagePullBackOff","message":"Back-off pulling image ghcr.io/acme/payments:bad","count":2,"involvedObject":{"kind":"Pod","namespace":"payments","name":"payments-api-abc123"}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get nodes -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"name":"aks-system-000001"},"spec":{"unschedulable":false},"status":{"conditions":[{"type":"Ready","status":"False"},{"type":"MemoryPressure","status":"True"},{"type":"DiskPressure","status":"False"},{"type":"PIDPressure","status":"False"}]}}]}
+JSON
+    ;;
   '--context prod-eu-1 get statefulsets -n payments -o json'|'--context prod-eu-1 get daemonsets -n payments -o json'|'--context prod-eu-1 get jobs -n payments -o json'|'--context prod-eu-1 get cronjobs -n payments -o json')
     printf '%s\n' '{"items":[]}'
     ;;
@@ -210,6 +220,16 @@ JSON
   'get deployments -n payments -o json')
     cat <<'JSON'
 {"items":[{"metadata":{"namespace":"payments","name":"payments-api"},"spec":{"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}}}]}
+JSON
+    ;;
+  'get events -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","creationTimestamp":"2026-03-26T10:00:00Z"},"type":"Warning","reason":"FailedScheduling","message":"0/3 nodes are available: 3 Insufficient memory.","count":4,"involvedObject":{"kind":"Pod","namespace":"payments","name":"payments-api-abc123"}},{"metadata":{"namespace":"payments","creationTimestamp":"2026-03-26T10:05:00Z"},"type":"Warning","reason":"ImagePullBackOff","message":"Back-off pulling image ghcr.io/acme/payments:bad","count":2,"involvedObject":{"kind":"Pod","namespace":"payments","name":"payments-api-abc123"}}]}
+JSON
+    ;;
+  'get nodes -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"name":"aks-system-000001"},"spec":{"unschedulable":false},"status":{"conditions":[{"type":"Ready","status":"False"},{"type":"MemoryPressure","status":"True"},{"type":"DiskPressure","status":"False"},{"type":"PIDPressure","status":"False"}]}}]}
 JSON
     ;;
   'get statefulsets -n payments -o json'|'get daemonsets -n payments -o json'|'get jobs -n payments -o json'|'get cronjobs -n payments -o json')
@@ -260,8 +280,17 @@ assert "service-exposure" in kinds
 assert "network-policies" in kinds
 assert "rbac-bindings" in kinds
 assert "rbac-roles" in kinds
+assert "node-health" in kinds
+assert "warning-events" in kinds
 assert "workload-specs" in kinds
 assert "workload-status" in kinds
+
+docs = {doc["kind"]: json.loads(doc["content"]) for doc in manifest["documents"]}
+assert docs["node-health"][0]["name"] == "aks-system-000001"
+assert docs["node-health"][0]["ready"] is False
+assert docs["node-health"][0]["pressure_conditions"] == ["MemoryPressure"]
+assert docs["warning-events"][0]["reason"] == "FailedScheduling"
+assert docs["warning-events"][1]["reason"] == "ImagePullBackOff"
 PY
 
 echo "validate-collector-scripts: ok"
