@@ -91,6 +91,37 @@ cat >"$TMP_DIR/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  '--context prod-eu-1 config view -o json')
+    cat <<'JSON'
+{
+  "current-context": "payments-context",
+  "contexts": [
+    {
+      "name": "payments-context",
+      "context": {
+        "cluster": "aks-payments-prod",
+        "namespace": "payments"
+      }
+    },
+    {
+      "name": "prod-eu-1",
+      "context": {
+        "cluster": "aks-payments-prod",
+        "namespace": "payments"
+      }
+    }
+  ],
+  "clusters": [
+    {
+      "name": "aks-payments-prod",
+      "cluster": {
+        "server": "https://example.invalid"
+      }
+    }
+  ]
+}
+JSON
+    ;;
   'config view -o json')
     cat <<'JSON'
 {
@@ -114,6 +145,47 @@ case "$*" in
   ]
 }
 JSON
+    ;;
+  '--context prod-eu-1 get services -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-public"},"spec":{"type":"LoadBalancer"},"status":{"loadBalancer":{"ingress":[{"ip":"203.0.113.10"}]}}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get networkpolicies -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"default-deny"}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get rolebindings -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-admin"},"roleRef":{"name":"payments-admin"},"subjects":[{"kind":"ServiceAccount","namespace":"payments","name":"payments-api"}]}]}
+JSON
+    ;;
+  '--context prod-eu-1 get roles -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-admin"},"rules":[{"apiGroups":[""],"resources":["pods"],"verbs":["get","list"]}]}]}
+JSON
+    ;;
+  '--context prod-eu-1 get deployments -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api"},"spec":{"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get statefulsets -n payments -o json'|'--context prod-eu-1 get daemonsets -n payments -o json'|'--context prod-eu-1 get jobs -n payments -o json'|'--context prod-eu-1 get cronjobs -n payments -o json')
+    printf '%s\n' '{"items":[]}'
+    ;;
+  '--context prod-eu-1 get pods -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api-abc123","ownerReferences":[{"kind":"ReplicaSet","name":"payments-api-67d8f7"}]},"status":{"phase":"Running","containerStatuses":[{"restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get replicasets -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api-67d8f7","ownerReferences":[{"kind":"Deployment","name":"payments-api"}]}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get clusterroles -o json'|'--context prod-eu-1 get clusterrolebindings -o json')
+    printf '%s\n' '{"items":[]}'
     ;;
   'get services -n payments -o json')
     cat <<'JSON'
@@ -166,6 +238,7 @@ chmod +x "$TMP_DIR/kubectl"
 
 PATH="$TMP_DIR:$PATH" ./collect-kubernetes-bundle.sh \
   --namespace payments \
+  --context prod-eu-1 \
   --provider aks \
   --output "$TMP_DIR/kubernetes.json"
 

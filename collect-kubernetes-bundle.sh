@@ -6,6 +6,7 @@
 set -euo pipefail
 
 KUBECTL_BIN="${SIGNALFORGE_KUBECTL_BIN:-kubectl}"
+KUBECTL_CONTEXT="${SIGNALFORGE_KUBERNETES_CONTEXT:-}"
 SCOPE="${SIGNALFORGE_KUBERNETES_SCOPE:-cluster}"
 NAMESPACE="${SIGNALFORGE_KUBERNETES_NAMESPACE:-}"
 CLUSTER_NAME="${SIGNALFORGE_KUBERNETES_CLUSTER_NAME:-}"
@@ -15,7 +16,7 @@ COLLECTOR_VERSION="${SIGNALFORGE_COLLECTOR_VERSION:-1.1.0}"
 
 show_help() {
   cat <<'EOF'
-Collect a kubernetes-bundle.v1 artifact from the current kubectl context.
+Collect a kubernetes-bundle.v1 artifact from an explicit or current kubectl context.
 
 Usage:
   ./collect-kubernetes-bundle.sh [options]
@@ -23,6 +24,7 @@ Usage:
 Options:
   --scope LEVEL         cluster or namespace (default: cluster)
   --namespace NAME      Namespace to scope collection to; implies --scope namespace
+  --context NAME        Explicit kubectl context to use
   --cluster-name NAME   Override cluster name in the manifest
   --provider NAME       Optional provider label (aks, eks, gke, oke, ...)
   --kubectl PATH        kubectl command to use (default: kubectl)
@@ -31,6 +33,7 @@ Options:
 
 Environment:
   SIGNALFORGE_KUBECTL_BIN
+  SIGNALFORGE_KUBERNETES_CONTEXT
   SIGNALFORGE_KUBERNETES_SCOPE
   SIGNALFORGE_KUBERNETES_NAMESPACE
   SIGNALFORGE_KUBERNETES_CLUSTER_NAME
@@ -47,6 +50,10 @@ while [[ $# -gt 0 ]]; do
     --namespace)
       NAMESPACE="${2:?missing value after $1}"
       SCOPE="namespace"
+      shift 2
+      ;;
+    --context)
+      KUBECTL_CONTEXT="${2:?missing value after $1}"
       shift 2
       ;;
     --cluster-name)
@@ -108,22 +115,27 @@ write_empty_json() {
   printf '%s\n' '{"items":[]}' > "$1"
 }
 
+kubectl_args=()
+if [[ -n "$KUBECTL_CONTEXT" ]]; then
+  kubectl_args+=(--context "$KUBECTL_CONTEXT")
+fi
+
 capture_json() {
   local outfile="$1"
   local required="$2"
   shift 2
 
-  if "$KUBECTL_BIN" "$@" -o json >"$outfile" 2>"$TMP_DIR/command.err"; then
+  if "$KUBECTL_BIN" "${kubectl_args[@]}" "$@" -o json >"$outfile" 2>"$TMP_DIR/command.err"; then
     return 0
   fi
 
   if [[ "$required" == "required" ]]; then
-    echo "error: kubectl $* failed" >&2
+    echo "error: kubectl ${kubectl_args[*]} $* failed" >&2
     cat "$TMP_DIR/command.err" >&2
     exit 1
   fi
 
-  echo "warning: kubectl $* failed; continuing with empty result" >&2
+  echo "warning: kubectl ${kubectl_args[*]} $* failed; continuing with empty result" >&2
   cat "$TMP_DIR/command.err" >&2
   write_empty_json "$outfile"
 }
@@ -161,13 +173,13 @@ if [[ -z "$OUTPUT_PATH" ]]; then
   OUTPUT_PATH="./${BASE_NAME}"
 fi
 
-python3 - "$TMP_DIR" "$SCOPE" "$NAMESPACE" "$CLUSTER_NAME" "$PROVIDER" "$OUTPUT_PATH" "$COLLECTOR_VERSION" <<'PY'
+python3 - "$TMP_DIR" "$SCOPE" "$NAMESPACE" "$CLUSTER_NAME" "$PROVIDER" "$OUTPUT_PATH" "$COLLECTOR_VERSION" "$KUBECTL_CONTEXT" <<'PY'
 import json
 import os
 import sys
 from datetime import datetime, timezone
 
-tmp_dir, scope_level, namespace, cluster_name_arg, provider_arg, output_path, collector_version = sys.argv[1:]
+tmp_dir, scope_level, namespace, cluster_name_arg, provider_arg, output_path, collector_version, explicit_context = sys.argv[1:]
 
 
 def load(name):
@@ -209,7 +221,7 @@ replicasets_doc = load("replicasets.json")
 clusterroles_doc = load("clusterroles.json")
 clusterrolebindings_doc = load("clusterrolebindings.json")
 
-current_context_name = config.get("current-context")
+current_context_name = explicit_context or config.get("current-context")
 contexts = {
     ctx.get("name"): (ctx.get("context") or {})
     for ctx in config.get("contexts", [])

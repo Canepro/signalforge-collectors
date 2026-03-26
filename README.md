@@ -70,7 +70,7 @@ Useful options:
 ### Collect Kubernetes Evidence
 
 ```bash
-./collect-kubernetes-bundle.sh --namespace payments
+./collect-kubernetes-bundle.sh --context prod-eu-1 --namespace payments
 ```
 
 This writes a `kubernetes_bundle_<scope>_<timestamp>.json` artifact in the `kubernetes-bundle.v1` format expected by SignalForge.
@@ -117,11 +117,11 @@ For **automated** collection, use [signalforge-agent](https://github.com/Canepro
 3. Runs a collector from **this repo**
 4. Uploads the artifact back to SignalForge automatically
 
-The agent orchestrates the HTTP lifecycle (claim → start → collect → upload → fail); this repo provides only the collector scripts. The current agent can now dispatch Linux, container, and Kubernetes collectors from a host install, but container and Kubernetes jobs still depend on host-local environment and scope preparation. In practice that means:
+The agent orchestrates the HTTP lifecycle (claim → start → collect → upload → fail); this repo provides only the collector scripts. The current agent can now dispatch Linux, container, and Kubernetes collectors from a host install, and Phase 9 job scope now maps directly to collector inputs where available. In practice that means:
 
 - Linux host collection is the cleanest end-to-end job-driven path today
-- container collection needs the agent host to be pinned to a specific container target, typically with `SIGNALFORGE_CONTAINER_REF`
-- Kubernetes collection needs the agent host to have the intended `kubectl` context and scope settings already in place
+- container collection can take an explicit target and runtime per job; `SIGNALFORGE_CONTAINER_REF` remains only as a legacy fallback
+- Kubernetes collection can take an explicit `--context` or `SIGNALFORGE_KUBERNETES_CONTEXT`, so job-driven callers do not need to rely on the ambient `kubectl current-context`
 - container image and Kubernetes-native agent deployment forms are still future packaging work, not shipped artifacts today
 
 ```bash
