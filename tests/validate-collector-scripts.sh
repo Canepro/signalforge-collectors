@@ -217,6 +217,16 @@ JSON
 {"items":[{"metadata":{"name":"aks-system-000001"},"spec":{"unschedulable":false},"status":{"conditions":[{"type":"Ready","status":"False"},{"type":"MemoryPressure","status":"True"},{"type":"DiskPressure","status":"False"},{"type":"PIDPressure","status":"False"}]}}]}
 JSON
     ;;
+  '--context prod-eu-1 top pods -n payments --no-headers')
+    cat <<'EOF_TOP_PODS'
+payments-api-abc123 412m 486Mi
+EOF_TOP_PODS
+    ;;
+  '--context prod-eu-1 top nodes --no-headers')
+    cat <<'EOF_TOP_NODES'
+aks-system-000001 1850m 92% 14900Mi 91%
+EOF_TOP_NODES
+    ;;
   '--context prod-eu-1 get statefulsets -n payments -o json'|'--context prod-eu-1 get daemonsets -n payments -o json'|'--context prod-eu-1 get jobs -n payments -o json'|'--context prod-eu-1 get cronjobs -n payments -o json')
     printf '%s\n' '{"items":[]}'
     ;;
@@ -268,6 +278,16 @@ JSON
 {"items":[{"metadata":{"name":"aks-system-000001"},"spec":{"unschedulable":false},"status":{"conditions":[{"type":"Ready","status":"False"},{"type":"MemoryPressure","status":"True"},{"type":"DiskPressure","status":"False"},{"type":"PIDPressure","status":"False"}]}}]}
 JSON
     ;;
+  'top pods -n payments --no-headers')
+    cat <<'EOF_TOP_PODS'
+payments-api-abc123 412m 486Mi
+EOF_TOP_PODS
+    ;;
+  'top nodes --no-headers')
+    cat <<'EOF_TOP_NODES'
+aks-system-000001 1850m 92% 14900Mi 91%
+EOF_TOP_NODES
+    ;;
   'get statefulsets -n payments -o json'|'get daemonsets -n payments -o json'|'get jobs -n payments -o json'|'get cronjobs -n payments -o json')
     printf '%s\n' '{"items":[]}'
     ;;
@@ -318,6 +338,8 @@ assert "rbac-bindings" in kinds
 assert "rbac-roles" in kinds
 assert "node-health" in kinds
 assert "warning-events" in kinds
+assert "pod-top" in kinds
+assert "node-top" in kinds
 assert "workload-specs" in kinds
 assert "workload-status" in kinds
 assert "workload-rollout-status" in kinds
@@ -328,6 +350,11 @@ assert docs["node-health"][0]["ready"] is False
 assert docs["node-health"][0]["pressure_conditions"] == ["MemoryPressure"]
 assert docs["warning-events"][0]["reason"] == "FailedScheduling"
 assert docs["warning-events"][1]["reason"] == "ImagePullBackOff"
+assert docs["pod-top"][0]["name"] == "payments-api-abc123"
+assert docs["pod-top"][0]["memory"] == "486Mi"
+assert docs["node-top"][0]["name"] == "aks-system-000001"
+assert docs["node-top"][0]["cpu_percent"] == 92.0
+assert docs["node-top"][0]["memory_percent"] == 91.0
 assert docs["workload-rollout-status"][0]["name"] == "payments-api"
 assert docs["workload-rollout-status"][0]["desired_replicas"] == 3
 assert docs["workload-rollout-status"][0]["ready_replicas"] == 1

@@ -115,6 +115,10 @@ write_empty_json() {
   printf '%s\n' '{"items":[]}' > "$1"
 }
 
+write_empty_text() {
+  : > "$1"
+}
+
 kubectl_args=()
 if [[ -n "$KUBECTL_CONTEXT" ]]; then
   kubectl_args+=(--context "$KUBECTL_CONTEXT")
@@ -138,6 +142,26 @@ capture_json() {
   echo "warning: kubectl ${kubectl_args[*]} $* failed; continuing with empty result" >&2
   cat "$TMP_DIR/command.err" >&2
   write_empty_json "$outfile"
+}
+
+capture_text() {
+  local outfile="$1"
+  local required="$2"
+  shift 2
+
+  if "$KUBECTL_BIN" "${kubectl_args[@]}" "$@" >"$outfile" 2>"$TMP_DIR/command.err"; then
+    return 0
+  fi
+
+  if [[ "$required" == "required" ]]; then
+    echo "error: kubectl ${kubectl_args[*]} $* failed" >&2
+    cat "$TMP_DIR/command.err" >&2
+    exit 1
+  fi
+
+  echo "warning: kubectl ${kubectl_args[*]} $* failed; continuing with empty result" >&2
+  cat "$TMP_DIR/command.err" >&2
+  write_empty_text "$outfile"
 }
 
 capture_json "$TMP_DIR/config.json" required config view
@@ -164,6 +188,8 @@ capture_json "$TMP_DIR/events.json" optional get events "${scope_args[@]}"
 capture_json "$TMP_DIR/nodes.json" optional get nodes
 capture_json "$TMP_DIR/clusterroles.json" optional get clusterroles
 capture_json "$TMP_DIR/clusterrolebindings.json" optional get clusterrolebindings
+capture_text "$TMP_DIR/top-pods.txt" optional top pods "${scope_args[@]}" --no-headers
+capture_text "$TMP_DIR/top-nodes.txt" optional top nodes --no-headers
 
 if [[ -z "$OUTPUT_PATH" ]]; then
   TS="$(date -u '+%Y%m%d_%H%M%S')"
@@ -188,6 +214,12 @@ def load(name):
     path = os.path.join(tmp_dir, name)
     with open(path, "r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def load_text(name):
+    path = os.path.join(tmp_dir, name)
+    with open(path, "r", encoding="utf-8") as handle:
+        return handle.read()
 
 
 def items(doc):
@@ -224,6 +256,8 @@ events_doc = load("events.json")
 nodes_doc = load("nodes.json")
 clusterroles_doc = load("clusterroles.json")
 clusterrolebindings_doc = load("clusterrolebindings.json")
+top_pods_raw = load_text("top-pods.txt")
+top_nodes_raw = load_text("top-nodes.txt")
 
 current_context_name = explicit_context or config.get("current-context")
 contexts = {
@@ -316,6 +350,70 @@ for event in items(events_doc):
             or metadata.get("creationTimestamp"),
         }
     )
+
+
+def parse_pod_top(raw, scope):
+    rows = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if scope == "namespace":
+            if len(parts) < 3:
+                continue
+            name, cpu, memory = parts[0], parts[1], parts[2]
+            rows.append(
+                {
+                    "namespace": namespace or None,
+                    "name": name,
+                    "cpu": cpu,
+                    "memory": memory,
+                }
+            )
+            continue
+        if len(parts) < 4:
+            continue
+        row_namespace, name, cpu, memory = parts[0], parts[1], parts[2], parts[3]
+        rows.append(
+            {
+                "namespace": row_namespace,
+                "name": name,
+                "cpu": cpu,
+                "memory": memory,
+            }
+        )
+    return rows
+
+
+def parse_percent(value):
+    text = str(value or "").strip()
+    if not text or not text.endswith("%"):
+        return None
+    try:
+        return float(text[:-1])
+    except ValueError:
+        return None
+
+
+def parse_node_top(raw):
+    rows = []
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        name, cpu, cpu_percent, memory, memory_percent = parts[0], parts[1], parts[2], parts[3], parts[4]
+        rows.append(
+            {
+                "name": name,
+                "cpu": cpu,
+                "cpu_percent": parse_percent(cpu_percent),
+                "memory": memory,
+                "memory_percent": parse_percent(memory_percent),
+            }
+        )
+    return rows
+
+
+pod_top = parse_pod_top(top_pods_raw, scope_level)
+node_top = parse_node_top(top_nodes_raw)
 
 
 def subject_string(subject, binding_namespace):
@@ -559,6 +657,18 @@ documents = [
             ),
             separators=(",", ":"),
         ),
+    },
+    {
+        "path": "metrics/pod-top.json",
+        "kind": "pod-top",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(pod_top, key=lambda row: (row.get("namespace") or "", row.get("name") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "metrics/node-top.json",
+        "kind": "node-top",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(node_top, key=lambda row: (row.get("name") or "")), separators=(",", ":")),
     },
     {
         "path": "workloads/specs.json",
