@@ -162,7 +162,7 @@ This path stays intentionally unchanged. Linux host collection does not require 
 - typed scope: `container_target`
 - explicit inputs:
   - `--container <container_ref>` or `SIGNALFORGE_CONTAINER_REF`
-  - optional `--runtime <docker|podman>` or `SIGNALFORGE_CONTAINER_RUNTIME`
+  - optional `--runtime <auto|docker|podman>` or `SIGNALFORGE_CONTAINER_RUNTIME`
   - optional `--hostname <host_hint>` or `SIGNALFORGE_CONTAINER_HOSTNAME`
 
 Current recommendation: prefer explicit flags from `signalforge-agent` or another orchestrator. The environment variables remain supported as a compatibility path, not the preferred long-term operator story.
