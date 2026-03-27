@@ -204,7 +204,7 @@ JSON
     ;;
   '--context prod-eu-1 get deployments -n payments -o json')
     cat <<'JSON'
-{"items":[{"metadata":{"namespace":"payments","name":"payments-api"},"spec":{"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}}}]}
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api","generation":4},"spec":{"replicas":3,"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}},"status":{"observedGeneration":4,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":2,"unavailableReplicas":2}}]}
 JSON
     ;;
   '--context prod-eu-1 get events -n payments -o json')
@@ -255,7 +255,7 @@ JSON
     ;;
   'get deployments -n payments -o json')
     cat <<'JSON'
-{"items":[{"metadata":{"namespace":"payments","name":"payments-api"},"spec":{"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}}}]}
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api","generation":4},"spec":{"replicas":3,"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}},"status":{"observedGeneration":4,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":2,"unavailableReplicas":2}}]}
 JSON
     ;;
   'get events -n payments -o json')
@@ -320,6 +320,7 @@ assert "node-health" in kinds
 assert "warning-events" in kinds
 assert "workload-specs" in kinds
 assert "workload-status" in kinds
+assert "workload-rollout-status" in kinds
 
 docs = {doc["kind"]: json.loads(doc["content"]) for doc in manifest["documents"]}
 assert docs["node-health"][0]["name"] == "aks-system-000001"
@@ -327,6 +328,10 @@ assert docs["node-health"][0]["ready"] is False
 assert docs["node-health"][0]["pressure_conditions"] == ["MemoryPressure"]
 assert docs["warning-events"][0]["reason"] == "FailedScheduling"
 assert docs["warning-events"][1]["reason"] == "ImagePullBackOff"
+assert docs["workload-rollout-status"][0]["name"] == "payments-api"
+assert docs["workload-rollout-status"][0]["desired_replicas"] == 3
+assert docs["workload-rollout-status"][0]["ready_replicas"] == 1
+assert docs["workload-rollout-status"][0]["updated_replicas"] == 2
 PY
 
 echo "validate-collector-scripts: ok"

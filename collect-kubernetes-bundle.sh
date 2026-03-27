@@ -362,6 +362,7 @@ for scope, doc in (("namespace", roles_doc), ("cluster", clusterroles_doc)):
         )
 
 workload_specs = []
+workload_rollout_status = []
 
 
 def add_workload_specs(doc, kind_name, pod_spec_selector):
@@ -386,6 +387,51 @@ add_workload_specs(statefulsets_doc, "StatefulSet", lambda spec: ((spec.get("tem
 add_workload_specs(daemonsets_doc, "DaemonSet", lambda spec: ((spec.get("template") or {}).get("spec") or {}))
 add_workload_specs(jobs_doc, "Job", lambda spec: ((spec.get("template") or {}).get("spec") or {}))
 add_workload_specs(cronjobs_doc, "CronJob", lambda spec: ((((spec.get("jobTemplate") or {}).get("spec") or {}).get("template") or {}).get("spec") or {}))
+
+
+def add_rollout_status(doc, kind_name):
+    for workload in items(doc):
+        metadata = workload.get("metadata") or {}
+        spec = workload.get("spec") or {}
+        status = workload.get("status") or {}
+        desired_replicas = None
+        ready_replicas = None
+        available_replicas = None
+        updated_replicas = None
+        unavailable_replicas = None
+
+        if kind_name in {"Deployment", "StatefulSet"}:
+            desired_replicas = int(spec.get("replicas") or 0)
+            ready_replicas = int(status.get("readyReplicas") or 0)
+            available_replicas = int(status.get("availableReplicas") or 0)
+            updated_replicas = int(status.get("updatedReplicas") or 0)
+            unavailable_replicas = int(status.get("unavailableReplicas") or max(desired_replicas - available_replicas, 0))
+        elif kind_name == "DaemonSet":
+            desired_replicas = int(status.get("desiredNumberScheduled") or 0)
+            ready_replicas = int(status.get("numberReady") or 0)
+            available_replicas = int(status.get("numberAvailable") or 0)
+            updated_replicas = int(status.get("updatedNumberScheduled") or 0)
+            unavailable_replicas = int(status.get("numberUnavailable") or max(desired_replicas - available_replicas, 0))
+
+        workload_rollout_status.append(
+            {
+                "namespace": metadata.get("namespace"),
+                "name": metadata.get("name"),
+                "kind": kind_name,
+                "desired_replicas": desired_replicas,
+                "ready_replicas": ready_replicas,
+                "available_replicas": available_replicas,
+                "updated_replicas": updated_replicas,
+                "unavailable_replicas": unavailable_replicas,
+                "generation": metadata.get("generation"),
+                "observed_generation": status.get("observedGeneration"),
+            }
+        )
+
+
+add_rollout_status(deployments_doc, "Deployment")
+add_rollout_status(statefulsets_doc, "StatefulSet")
+add_rollout_status(daemonsets_doc, "DaemonSet")
 
 replicaset_owner = {}
 for replica_set in items(replicasets_doc):
@@ -525,6 +571,12 @@ documents = [
         "kind": "workload-status",
         "media_type": "application/json",
         "content": json.dumps(sorted(workload_status.values(), key=lambda row: (row.get("namespace") or "", row.get("name") or "", row.get("kind") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "workloads/rollout-status.json",
+        "kind": "workload-rollout-status",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(workload_rollout_status, key=lambda row: (row.get("namespace") or "", row.get("name") or "", row.get("kind") or "")), separators=(",", ":")),
     },
 ]
 

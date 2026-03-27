@@ -79,6 +79,7 @@ The current bundle includes normalized service exposure, network policies, RBAC,
 
 - warning events
 - node readiness and pressure conditions
+- controller rollout status for Deployments, StatefulSets, and DaemonSets
 
 Useful options:
 
