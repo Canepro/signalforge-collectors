@@ -124,6 +124,8 @@ import os
 import subprocess
 import sys
 
+LOG_TIMEOUT_SECONDS = 5
+
 runtime = sys.argv[1]
 container_ref = sys.argv[2]
 hostname = sys.argv[3]
@@ -242,12 +244,18 @@ def normalize_log_excerpt(raw_text):
     }
 
 
-def collect_logs(previous=False):
+def collect_logs():
     command = [runtime, "logs", "--tail", "40", "--timestamps"]
-    if previous:
-        command.append("--previous")
     command.append(container_ref)
-    result = subprocess.run(command, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=LOG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if result.returncode != 0:
         return None
     return normalize_log_excerpt(result.stdout)
@@ -323,18 +331,18 @@ pid_count = first_int(
     stats_item.get("pids"),
 )
 log_reason = None
-if state_status != "running":
+if bool(state.get("OOMKilled")):
+    log_reason = "oom_killed"
+elif state_status != "running":
     log_reason = state_status
 elif health_status == "unhealthy":
     log_reason = "unhealthy"
 elif restart_count >= 3:
     log_reason = "restarting"
-elif bool(state.get("OOMKilled")):
-    log_reason = "oom_killed"
 
 log_excerpts = []
 if log_reason is not None:
-    current_logs = collect_logs(previous=False)
+    current_logs = collect_logs()
     if current_logs is not None:
         log_excerpts.append(
             {
@@ -343,16 +351,6 @@ if log_reason is not None:
                 **current_logs,
             }
         )
-    if restart_count > 0 or bool(state.get("OOMKilled")):
-        previous_logs = collect_logs(previous=True)
-        if previous_logs is not None:
-            log_excerpts.append(
-                {
-                    "source": "previous",
-                    "reason": log_reason,
-                    **previous_logs,
-                }
-            )
 
 name = str(item.get("Name") or "").lstrip("/")
 container_id = str(item.get("Id") or "").strip()

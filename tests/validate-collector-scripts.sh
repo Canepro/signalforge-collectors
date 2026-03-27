@@ -94,13 +94,6 @@ JSON
 fi
 if [[ "${1:-}" == "logs" && "${2:-}" == "--tail" && "${3:-}" == "40" && "${4:-}" == "--timestamps" && "${5:-}" == "payments-api" ]]; then
   cat <<'LOG'
-2026-03-26T10:06:00Z retrying database connection
-2026-03-26T10:06:01Z health probe still failing
-LOG
-  exit 0
-fi
-if [[ "${1:-}" == "logs" && "${2:-}" == "--tail" && "${3:-}" == "40" && "${4:-}" == "--timestamps" && "${5:-}" == "--previous" && "${6:-}" == "payments-api" ]]; then
-  cat <<'LOG'
 2026-03-26T10:05:10Z panic: database connection refused
 2026-03-26T10:05:11Z retry budget exhausted after 5 attempts
 LOG
@@ -149,12 +142,10 @@ payload = next(
     if line.startswith("failure_log_excerpts_json: ")
 )
 entries = json.loads(payload)
-assert len(entries) == 2
+assert len(entries) == 1
 assert entries[0]["source"] == "current"
-assert entries[0]["reason"] == "restarting"
-assert entries[0]["excerpt_lines"][0].endswith("retrying database connection")
-assert entries[1]["source"] == "previous"
-assert entries[1]["excerpt_lines"][0].endswith("panic: database connection refused")
+assert entries[0]["reason"] == "oom_killed"
+assert entries[0]["excerpt_lines"][0].endswith("panic: database connection refused")
 PY
 
 cat >"$TMP_DIR/kubectl" <<'EOF'
@@ -238,7 +229,7 @@ JSON
     ;;
   '--context prod-eu-1 get deployments -n payments -o json')
     cat <<'JSON'
-{"items":[{"metadata":{"namespace":"payments","name":"payments-api","generation":4},"spec":{"replicas":3,"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}},"status":{"observedGeneration":4,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":2,"unavailableReplicas":2}}]}
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api","generation":4},"spec":{"replicas":3,"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}},"status":{"observedGeneration":4,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":2,"unavailableReplicas":2}},{"metadata":{"namespace":"payments","name":"payments-worker","generation":2},"spec":{"template":{"spec":{"serviceAccountName":"payments-worker","containers":[{"name":"worker","image":"ghcr.io/acme/payments-worker:v1"}]}}},"status":{"observedGeneration":2,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":1,"unavailableReplicas":0}}]}
 JSON
     ;;
   '--context prod-eu-1 get events -n payments -o json')
@@ -295,7 +286,7 @@ JSON
     ;;
   '--context prod-eu-1 get resourcequotas -n payments -o json')
     cat <<'JSON'
-{"items":[{"metadata":{"namespace":"payments","name":"payments-quota"},"status":{"hard":{"pods":"10","requests.cpu":"4","requests.memory":"8Gi"},"used":{"pods":"6","requests.cpu":"2500m","requests.memory":"6Gi"}}}]}
+{"items":[{"metadata":{"namespace":"payments","name":"payments-quota"},"status":{"hard":{"pods":"10","requests.cpu":"4","requests.memory":"8Gi","services":"1000k"},"used":{"pods":"6","requests.cpu":"2500m","requests.memory":"6Gi","services":"500k"}}}]}
 JSON
     ;;
   '--context prod-eu-1 get limitranges -n payments -o json')
@@ -343,7 +334,7 @@ JSON
     ;;
   'get deployments -n payments -o json')
     cat <<'JSON'
-{"items":[{"metadata":{"namespace":"payments","name":"payments-api","generation":4},"spec":{"replicas":3,"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}},"status":{"observedGeneration":4,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":2,"unavailableReplicas":2}}]}
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api","generation":4},"spec":{"replicas":3,"template":{"spec":{"serviceAccountName":"payments-api","automountServiceAccountToken":true,"containers":[{"name":"api","image":"ghcr.io/acme/payments:v1","securityContext":{"allowPrivilegeEscalation":false,"runAsNonRoot":true,"readOnlyRootFilesystem":false}}]}}},"status":{"observedGeneration":4,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":2,"unavailableReplicas":2}},{"metadata":{"namespace":"payments","name":"payments-worker","generation":2},"spec":{"template":{"spec":{"serviceAccountName":"payments-worker","containers":[{"name":"worker","image":"ghcr.io/acme/payments-worker:v1"}]}}},"status":{"observedGeneration":2,"readyReplicas":1,"availableReplicas":1,"updatedReplicas":1,"unavailableReplicas":0}}]}
 JSON
     ;;
   'get events -n payments -o json')
@@ -435,6 +426,8 @@ assert docs["horizontal-pod-autoscalers"][0]["target_cpu_utilization_percentage"
 assert docs["pod-disruption-budgets"][0]["min_available"] == "2"
 assert docs["resource-quotas"][0]["resources"][0]["resource"] == "pods"
 assert docs["resource-quotas"][0]["resources"][0]["used_ratio"] == 0.6
+assert docs["resource-quotas"][0]["resources"][3]["resource"] == "services"
+assert docs["resource-quotas"][0]["resources"][3]["used_ratio"] == 0.5
 assert docs["limit-ranges"][0]["has_default_requests"] is True
 assert docs["limit-ranges"][0]["has_default_limits"] is True
 assert docs["node-health"][0]["name"] == "aks-system-000001"
@@ -466,6 +459,8 @@ assert docs["workload-rollout-status"][0]["name"] == "payments-api"
 assert docs["workload-rollout-status"][0]["desired_replicas"] == 3
 assert docs["workload-rollout-status"][0]["ready_replicas"] == 1
 assert docs["workload-rollout-status"][0]["updated_replicas"] == 2
+assert docs["workload-rollout-status"][1]["name"] == "payments-worker"
+assert docs["workload-rollout-status"][1]["desired_replicas"] == 1
 PY
 
 SIGNALFORGE_TEST_STORAGE_FAILURES=1 PATH="$TMP_DIR:$PATH" ./collect-kubernetes-bundle.sh \

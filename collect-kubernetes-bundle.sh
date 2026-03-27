@@ -216,6 +216,7 @@ import re
 from datetime import datetime, timezone
 
 tmp_dir, scope_level, namespace, cluster_name_arg, provider_arg, output_path, collector_version, explicit_context, kubectl_bin = sys.argv[1:]
+LOG_TIMEOUT_SECONDS = 5
 
 
 def load(name):
@@ -293,6 +294,7 @@ def parse_quantity(value):
         "Pi": 1024.0**5,
         "Ei": 1024.0**6,
         "K": 1000.0,
+        "k": 1000.0,
         "M": 1000.0**2,
         "G": 1000.0**3,
         "T": 1000.0**4,
@@ -779,7 +781,7 @@ def add_rollout_status(doc, kind_name):
         unavailable_replicas = None
 
         if kind_name in {"Deployment", "StatefulSet"}:
-            desired_replicas = int(spec.get("replicas") or 0)
+            desired_replicas = 1 if spec.get("replicas") is None else int(spec.get("replicas"))
             ready_replicas = int(status.get("readyReplicas") or 0)
             available_replicas = int(status.get("availableReplicas") or 0)
             updated_replicas = int(status.get("updatedReplicas") or 0)
@@ -927,12 +929,16 @@ def run_kubectl_logs(namespace_value, pod_name, container_name, previous):
     if previous:
         command.append("--previous")
 
-    result = subprocess.run(
-        command,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=LOG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if result.returncode != 0:
         return None
 
@@ -941,16 +947,18 @@ def run_kubectl_logs(namespace_value, pod_name, container_name, previous):
         return None
 
     normalized_lines = []
+    truncated = len(raw_lines) > 24
     for line in raw_lines[-24:]:
         if len(line) > 240:
             normalized_lines.append(f"{line[:237]}...")
+            truncated = True
         else:
             normalized_lines.append(line)
 
     return {
         "excerpt_lines": normalized_lines,
         "line_count": len(raw_lines),
-        "truncated": len(raw_lines) > len(normalized_lines),
+        "truncated": truncated,
     }
 
 
