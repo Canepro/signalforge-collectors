@@ -108,16 +108,30 @@ if [[ -z "$OUTPUT_PATH" ]]; then
 fi
 
 INSPECT_JSON="$("$RUNTIME_CMD" inspect "$CONTAINER_REF")"
+STATS_JSON=""
+case "$RUNTIME_CMD" in
+  docker)
+    STATS_JSON="$("$RUNTIME_CMD" stats --no-stream --format '{{ json . }}' "$CONTAINER_REF" 2>/dev/null || true)"
+    ;;
+  podman)
+    STATS_JSON="$("$RUNTIME_CMD" stats --no-stream --format json "$CONTAINER_REF" 2>/dev/null || true)"
+    ;;
+esac
 
-INSPECT_JSON="$INSPECT_JSON" python3 - "$RUNTIME_CMD" "$HOST_LABEL" "$OUTPUT_PATH" <<'PY'
+INSPECT_JSON="$INSPECT_JSON" STATS_JSON="$STATS_JSON" python3 - "$RUNTIME_CMD" "$CONTAINER_REF" "$HOST_LABEL" "$OUTPUT_PATH" <<'PY'
 import json
 import os
+import subprocess
 import sys
 
+LOG_TIMEOUT_SECONDS = 5
+
 runtime = sys.argv[1]
-hostname = sys.argv[2]
-output_path = sys.argv[3]
+container_ref = sys.argv[2]
+hostname = sys.argv[3]
+output_path = sys.argv[4]
 raw = os.environ.get("INSPECT_JSON", "")
+raw_stats = os.environ.get("STATS_JSON", "")
 parsed = json.loads(raw)
 item = parsed[0] if isinstance(parsed, list) and parsed else parsed
 if not isinstance(item, dict):
@@ -127,6 +141,21 @@ host_config = item.get("HostConfig") or {}
 config = item.get("Config") or {}
 network_settings = item.get("NetworkSettings") or {}
 mounts = item.get("Mounts") or []
+state = item.get("State") or {}
+health = state.get("Health") or {}
+stats_item = {}
+
+if raw_stats.strip():
+    try:
+        parsed_stats = json.loads(raw_stats)
+        if isinstance(parsed_stats, list) and parsed_stats:
+            candidate = parsed_stats[0]
+        else:
+            candidate = parsed_stats
+        if isinstance(candidate, dict):
+            stats_item = candidate
+    except Exception:
+        stats_item = {}
 
 
 def as_bool(value):
@@ -151,6 +180,85 @@ def first_truthy(*values):
         if value:
             return value
     return ""
+
+
+def first_int(*values):
+    for value in values:
+        if value is None or value == "":
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def normalize_state(value, fallback="unknown"):
+    normalized = str(value or "").strip().lower()
+    return normalized or fallback
+
+
+def normalize_percent(value):
+    text = str(value or "").strip()
+    if not text or text == "--":
+        return None
+    if text.endswith("%"):
+        text = text[:-1].strip()
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def normalize_log_excerpt(raw_text):
+    lines = [line.rstrip() for line in str(raw_text or "").splitlines() if line.strip()]
+    if not lines:
+        return None
+
+    original_line_count = len(lines)
+    truncated = False
+    if len(lines) > 12:
+        lines = lines[-12:]
+        truncated = True
+
+    bounded = []
+    total_chars = 0
+    for line in lines:
+        extra = len(line) + (1 if bounded else 0)
+        if total_chars + extra > 1600:
+            remaining = max(0, 1600 - total_chars - (1 if bounded else 0))
+            if remaining > 1:
+                bounded.append(f"{line[: remaining - 1]}…")
+            truncated = True
+            break
+        bounded.append(line)
+        total_chars += extra
+
+    if not bounded:
+        return None
+
+    return {
+        "excerpt_lines": bounded,
+        "line_count": original_line_count,
+        "truncated": truncated,
+    }
+
+
+def collect_logs():
+    command = [runtime, "logs", "--tail", "40", "--timestamps"]
+    command.append(container_ref)
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=LOG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        return None
+    return normalize_log_excerpt(result.stdout)
 
 
 def format_mount(entry):
@@ -198,6 +306,51 @@ for entry in mounts:
 
 security_options = [str(value).lower() for value in as_list(host_config.get("SecurityOpt"))]
 allow_privilege_escalation = not any("no-new-privileges" in value for value in security_options)
+state_status = normalize_state(state.get("Status"))
+health_status = normalize_state(health.get("Status"), "none")
+restart_count = first_int(item.get("RestartCount"), state.get("RestartCount")) or 0
+exit_code = first_int(state.get("ExitCode"))
+memory_limit_bytes = first_int(host_config.get("Memory")) or 0
+memory_reservation_bytes = first_int(host_config.get("MemoryReservation")) or 0
+cpu_percent = normalize_percent(
+    first_truthy(
+        stats_item.get("CPUPerc"),
+        stats_item.get("cpu_percent"),
+        stats_item.get("CPUPERCENT"),
+    )
+)
+memory_percent = normalize_percent(
+    first_truthy(
+        stats_item.get("MemPerc"),
+        stats_item.get("mem_percent"),
+        stats_item.get("MEMPERCENT"),
+    )
+)
+pid_count = first_int(
+    stats_item.get("PIDs"),
+    stats_item.get("pids"),
+)
+log_reason = None
+if bool(state.get("OOMKilled")):
+    log_reason = "oom_killed"
+elif state_status != "running":
+    log_reason = state_status
+elif health_status == "unhealthy":
+    log_reason = "unhealthy"
+elif restart_count >= 3:
+    log_reason = "restarting"
+
+log_excerpts = []
+if log_reason is not None:
+    current_logs = collect_logs()
+    if current_logs is not None:
+        log_excerpts.append(
+            {
+                "source": "current",
+                "reason": log_reason,
+                **current_logs,
+            }
+        )
 
 name = str(item.get("Name") or "").lstrip("/")
 container_id = str(item.get("Id") or "").strip()
@@ -210,6 +363,11 @@ lines = [
     f"container_name: {first_truthy(name, str(item.get('Names') or '').lstrip('/'), 'unknown-container')}",
     f"container_id: {first_truthy(container_id, 'unknown-container-id')}",
     f"image: {first_truthy(str(config.get('Image') or '').strip(), str(item.get('ImageName') or '').strip(), 'unknown-image')}",
+    f"state_status: {state_status}",
+    f"health_status: {health_status}",
+    f"restart_count: {restart_count}",
+    f"oom_killed: {as_bool(state.get('OOMKilled'))}",
+    f"exit_code: {exit_code if exit_code is not None else 'unknown'}",
     f"published_ports: {', '.join(published_ports) if published_ports else 'none'}",
     f"privileged: {as_bool(host_config.get('Privileged'))}",
     f"host_network: {as_bool(str(host_config.get('NetworkMode') or '').strip() == 'host')}",
@@ -221,7 +379,20 @@ lines = [
     f"read_only_rootfs: {as_bool(host_config.get('ReadonlyRootfs'))}",
     f"secrets: {', '.join(secret_mounts) if secret_mounts else 'none'}",
     f"ran_as_root: {as_bool(is_root(config.get('User')))}",
+    f"memory_limit_bytes: {memory_limit_bytes}",
+    f"memory_reservation_bytes: {memory_reservation_bytes}",
 ]
+
+if cpu_percent is not None:
+    lines.append(f"cpu_percent: {cpu_percent:.2f}")
+if memory_percent is not None:
+    lines.append(f"memory_percent: {memory_percent:.2f}")
+if pid_count is not None:
+    lines.append(f"pid_count: {pid_count}")
+if log_excerpts:
+    lines.append(
+        f"failure_log_excerpts_json: {json.dumps(log_excerpts, separators=(',', ':'))}"
+    )
 
 with open(output_path, "w", encoding="utf-8") as handle:
     handle.write("\n".join(lines) + "\n")
