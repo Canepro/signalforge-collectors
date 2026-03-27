@@ -263,6 +263,24 @@ JSON
 {"items":[{"metadata":{"namespace":"payments","name":"payments-limits"},"spec":{"limits":[{"type":"Container","defaultRequest":{"cpu":"100m","memory":"128Mi"},"default":{"cpu":"500m","memory":"512Mi"}}]}}]}
 JSON
     ;;
+  '--context prod-eu-1 get persistentvolumeclaims -n payments -o json')
+    if [[ "${SIGNALFORGE_TEST_STORAGE_FAILURES:-0}" == "1" ]]; then
+      echo "forbidden: persistentvolumeclaims is unavailable" >&2
+      exit 1
+    fi
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-data"},"spec":{"storageClassName":"premium-ssd","volumeName":"pv-payments-data","accessModes":["ReadWriteOnce"],"volumeMode":"Filesystem","resources":{"requests":{"storage":"20Gi"}}},"status":{"phase":"Bound","capacity":{"storage":"20Gi"},"conditions":[{"type":"FileSystemResizePending","status":"False"}]}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get persistentvolumes -o json')
+    if [[ "${SIGNALFORGE_TEST_STORAGE_FAILURES:-0}" == "1" ]]; then
+      echo "forbidden: persistentvolumes is unavailable" >&2
+      exit 1
+    fi
+    cat <<'JSON'
+{"items":[{"metadata":{"name":"pv-payments-data"},"spec":{"storageClassName":"premium-ssd","claimRef":{"namespace":"payments","name":"payments-data"},"accessModes":["ReadWriteOnce"],"volumeMode":"Filesystem","capacity":{"storage":"20Gi"},"persistentVolumeReclaimPolicy":"Retain","csi":{"driver":"disk.csi.example.com"}},"status":{"phase":"Bound","capacity":{"storage":"20Gi"}}}]}
+JSON
+    ;;
   'get services -n payments -o json')
     cat <<'JSON'
 {"items":[{"metadata":{"namespace":"payments","name":"payments-public"},"spec":{"type":"LoadBalancer"},"status":{"loadBalancer":{"ingress":[{"ip":"203.0.113.10"}]}}}]}
@@ -367,6 +385,8 @@ assert "horizontal-pod-autoscalers" in kinds
 assert "pod-disruption-budgets" in kinds
 assert "resource-quotas" in kinds
 assert "limit-ranges" in kinds
+assert "persistent-volume-claims" in kinds
+assert "persistent-volumes" in kinds
 
 docs = {doc["kind"]: json.loads(doc["content"]) for doc in manifest["documents"]}
 assert docs["horizontal-pod-autoscalers"][0]["scale_target_kind"] == "Deployment"
@@ -381,6 +401,15 @@ assert docs["node-health"][0]["ready"] is False
 assert docs["node-health"][0]["pressure_conditions"] == ["MemoryPressure"]
 assert docs["warning-events"][0]["reason"] == "FailedScheduling"
 assert docs["warning-events"][1]["reason"] == "ImagePullBackOff"
+assert docs["persistent-volume-claims"][0]["name"] == "payments-data"
+assert docs["persistent-volume-claims"][0]["bound"] is True
+assert docs["persistent-volume-claims"][0]["requested_storage"] == "20Gi"
+assert docs["persistent-volume-claims"][0]["capacity_storage"] == "20Gi"
+assert docs["persistent-volumes"][0]["name"] == "pv-payments-data"
+assert docs["persistent-volumes"][0]["claim_namespace"] == "payments"
+assert docs["persistent-volumes"][0]["claim_name"] == "payments-data"
+assert docs["persistent-volumes"][0]["reclaim_policy"] == "Retain"
+assert docs["persistent-volumes"][0]["csi_driver"] == "disk.csi.example.com"
 assert docs["pod-top"][0]["name"] == "payments-api-abc123"
 assert docs["pod-top"][0]["memory"] == "486Mi"
 assert docs["node-top"][0]["name"] == "aks-system-000001"
@@ -390,6 +419,24 @@ assert docs["workload-rollout-status"][0]["name"] == "payments-api"
 assert docs["workload-rollout-status"][0]["desired_replicas"] == 3
 assert docs["workload-rollout-status"][0]["ready_replicas"] == 1
 assert docs["workload-rollout-status"][0]["updated_replicas"] == 2
+PY
+
+SIGNALFORGE_TEST_STORAGE_FAILURES=1 PATH="$TMP_DIR:$PATH" ./collect-kubernetes-bundle.sh \
+  --namespace payments \
+  --context prod-eu-1 \
+  --provider aks \
+  --output "$TMP_DIR/kubernetes-storage-fallback.json"
+
+python3 - "$TMP_DIR/kubernetes-storage-fallback.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+docs = {doc["kind"]: json.loads(doc["content"]) for doc in manifest["documents"]}
+assert docs["persistent-volume-claims"] == []
+assert docs["persistent-volumes"] == []
 PY
 
 echo "validate-collector-scripts: ok"

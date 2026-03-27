@@ -192,6 +192,8 @@ capture_json "$TMP_DIR/hpas.json" optional get horizontalpodautoscalers "${scope
 capture_json "$TMP_DIR/poddisruptionbudgets.json" optional get poddisruptionbudgets "${scope_args[@]}"
 capture_json "$TMP_DIR/resourcequotas.json" optional get resourcequotas "${scope_args[@]}"
 capture_json "$TMP_DIR/limitranges.json" optional get limitranges "${scope_args[@]}"
+capture_json "$TMP_DIR/persistentvolumeclaims.json" optional get persistentvolumeclaims "${scope_args[@]}"
+capture_json "$TMP_DIR/persistentvolumes.json" optional get persistentvolumes
 capture_text "$TMP_DIR/top-pods.txt" optional top pods "${scope_args[@]}" --no-headers
 capture_text "$TMP_DIR/top-nodes.txt" optional top nodes --no-headers
 
@@ -311,6 +313,8 @@ horizontal_pod_autoscalers_doc = load("hpas.json")
 pod_disruption_budgets_doc = load("poddisruptionbudgets.json")
 resource_quotas_doc = load("resourcequotas.json")
 limit_ranges_doc = load("limitranges.json")
+persistent_volume_claims_doc = load("persistentvolumeclaims.json")
+persistent_volumes_doc = load("persistentvolumes.json")
 deployments_doc = load("deployments.json")
 statefulsets_doc = load("statefulsets.json")
 daemonsets_doc = load("daemonsets.json")
@@ -496,6 +500,61 @@ for limit_range in items(limit_ranges_doc):
             "name": metadata.get("name"),
             "has_default_requests": has_default_requests,
             "has_default_limits": has_default_limits,
+        }
+    )
+
+
+persistent_volume_claim_state = []
+for claim in items(persistent_volume_claims_doc):
+    metadata = claim.get("metadata") or {}
+    spec = claim.get("spec") or {}
+    status = claim.get("status") or {}
+    conditions = []
+    for condition in status.get("conditions") or []:
+        conditions.append(
+            {
+                "type": condition.get("type"),
+                "status": condition.get("status"),
+                "reason": condition.get("reason"),
+                "message": condition.get("message"),
+            }
+        )
+
+    persistent_volume_claim_state.append(
+        {
+            "namespace": metadata.get("namespace"),
+            "name": metadata.get("name"),
+            "phase": status.get("phase"),
+            "bound": str(status.get("phase") or "").strip().lower() == "bound",
+            "storage_class_name": spec.get("storageClassName"),
+            "volume_name": spec.get("volumeName"),
+            "access_modes": spec.get("accessModes") or [],
+            "volume_mode": spec.get("volumeMode"),
+            "requested_storage": ((spec.get("resources") or {}).get("requests") or {}).get("storage"),
+            "capacity_storage": (status.get("capacity") or {}).get("storage"),
+            "conditions": conditions,
+        }
+    )
+
+
+persistent_volume_state = []
+for volume in items(persistent_volumes_doc):
+    metadata = volume.get("metadata") or {}
+    spec = volume.get("spec") or {}
+    status = volume.get("status") or {}
+    claim_ref = spec.get("claimRef") or {}
+    persistent_volume_state.append(
+        {
+            "name": metadata.get("name"),
+            "phase": status.get("phase"),
+            "storage_class_name": spec.get("storageClassName"),
+            "claim_namespace": claim_ref.get("namespace"),
+            "claim_name": claim_ref.get("name"),
+            "access_modes": spec.get("accessModes") or [],
+            "volume_mode": spec.get("volumeMode"),
+            "capacity_storage": (status.get("capacity") or {}).get("storage") or (spec.get("capacity") or {}).get("storage"),
+            "reclaim_policy": spec.get("persistentVolumeReclaimPolicy"),
+            "csi_driver": ((spec.get("csi") or {}).get("driver")),
         }
     )
 
@@ -867,6 +926,18 @@ documents = [
         "kind": "limit-ranges",
         "media_type": "application/json",
         "content": json.dumps(sorted(limit_range_state, key=lambda row: (row.get("namespace") or "", row.get("name") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "storage/persistent-volume-claims.json",
+        "kind": "persistent-volume-claims",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(persistent_volume_claim_state, key=lambda row: (row.get("namespace") or "", row.get("name") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "storage/persistent-volumes.json",
+        "kind": "persistent-volumes",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(persistent_volume_state, key=lambda row: (row.get("name") or "")), separators=(",", ":")),
     },
     {
         "path": "events/warning-events.json",
