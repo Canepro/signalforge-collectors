@@ -80,6 +80,7 @@ The current bundle includes normalized service exposure, network policies, RBAC,
 - warning events
 - node readiness and pressure conditions
 - controller rollout status for Deployments, StatefulSets, and DaemonSets
+- optional bounded docs for HorizontalPodAutoscaler, PodDisruptionBudget, ResourceQuota, and LimitRange state
 - optional `kubectl top` snapshots for nodes and pods when metrics are available
 
 Useful options:

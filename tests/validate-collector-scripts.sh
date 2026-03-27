@@ -243,6 +243,26 @@ JSON
   '--context prod-eu-1 get clusterroles -o json'|'--context prod-eu-1 get clusterrolebindings -o json')
     printf '%s\n' '{"items":[]}'
     ;;
+  '--context prod-eu-1 get horizontalpodautoscalers -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api"},"spec":{"scaleTargetRef":{"kind":"Deployment","name":"payments-api"},"minReplicas":2,"maxReplicas":6,"metrics":[{"type":"Resource","resource":{"name":"cpu","target":{"type":"Utilization","averageUtilization":60}}}]},"status":{"currentReplicas":4,"desiredReplicas":5,"currentCPUUtilizationPercentage":72,"conditions":[{"type":"AbleToScale","status":"True","reason":"Ready","message":"scaled"}],"currentMetrics":[{"type":"Resource","resource":{"name":"cpu","current":{"averageUtilization":72}}}]}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get poddisruptionbudgets -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api-pdb"},"spec":{"minAvailable":"2"},"status":{"currentHealthy":3,"desiredHealthy":2,"disruptionsAllowed":1,"expectedPods":4}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get resourcequotas -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-quota"},"status":{"hard":{"pods":"10","requests.cpu":"4","requests.memory":"8Gi"},"used":{"pods":"6","requests.cpu":"2500m","requests.memory":"6Gi"}}}]}
+JSON
+    ;;
+  '--context prod-eu-1 get limitranges -n payments -o json')
+    cat <<'JSON'
+{"items":[{"metadata":{"namespace":"payments","name":"payments-limits"},"spec":{"limits":[{"type":"Container","defaultRequest":{"cpu":"100m","memory":"128Mi"},"default":{"cpu":"500m","memory":"512Mi"}}]}}]}
+JSON
+    ;;
   'get services -n payments -o json')
     cat <<'JSON'
 {"items":[{"metadata":{"namespace":"payments","name":"payments-public"},"spec":{"type":"LoadBalancer"},"status":{"loadBalancer":{"ingress":[{"ip":"203.0.113.10"}]}}}]}
@@ -343,8 +363,19 @@ assert "node-top" in kinds
 assert "workload-specs" in kinds
 assert "workload-status" in kinds
 assert "workload-rollout-status" in kinds
+assert "horizontal-pod-autoscalers" in kinds
+assert "pod-disruption-budgets" in kinds
+assert "resource-quotas" in kinds
+assert "limit-ranges" in kinds
 
 docs = {doc["kind"]: json.loads(doc["content"]) for doc in manifest["documents"]}
+assert docs["horizontal-pod-autoscalers"][0]["scale_target_kind"] == "Deployment"
+assert docs["horizontal-pod-autoscalers"][0]["target_cpu_utilization_percentage"] == 60
+assert docs["pod-disruption-budgets"][0]["min_available"] == "2"
+assert docs["resource-quotas"][0]["resources"][0]["resource"] == "pods"
+assert docs["resource-quotas"][0]["resources"][0]["used_ratio"] == 0.6
+assert docs["limit-ranges"][0]["has_default_requests"] is True
+assert docs["limit-ranges"][0]["has_default_limits"] is True
 assert docs["node-health"][0]["name"] == "aks-system-000001"
 assert docs["node-health"][0]["ready"] is False
 assert docs["node-health"][0]["pressure_conditions"] == ["MemoryPressure"]

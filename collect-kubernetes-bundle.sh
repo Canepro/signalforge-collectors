@@ -188,6 +188,10 @@ capture_json "$TMP_DIR/events.json" optional get events "${scope_args[@]}"
 capture_json "$TMP_DIR/nodes.json" optional get nodes
 capture_json "$TMP_DIR/clusterroles.json" optional get clusterroles
 capture_json "$TMP_DIR/clusterrolebindings.json" optional get clusterrolebindings
+capture_json "$TMP_DIR/hpas.json" optional get horizontalpodautoscalers "${scope_args[@]}"
+capture_json "$TMP_DIR/poddisruptionbudgets.json" optional get poddisruptionbudgets "${scope_args[@]}"
+capture_json "$TMP_DIR/resourcequotas.json" optional get resourcequotas "${scope_args[@]}"
+capture_json "$TMP_DIR/limitranges.json" optional get limitranges "${scope_args[@]}"
 capture_text "$TMP_DIR/top-pods.txt" optional top pods "${scope_args[@]}" --no-headers
 capture_text "$TMP_DIR/top-nodes.txt" optional top nodes --no-headers
 
@@ -205,6 +209,7 @@ python3 - "$TMP_DIR" "$SCOPE" "$NAMESPACE" "$CLUSTER_NAME" "$PROVIDER" "$OUTPUT_
 import json
 import os
 import sys
+import re
 from datetime import datetime, timezone
 
 tmp_dir, scope_level, namespace, cluster_name_arg, provider_arg, output_path, collector_version, explicit_context = sys.argv[1:]
@@ -232,6 +237,63 @@ def first_owner(metadata):
     return owners[0] if owners else None
 
 
+def as_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def as_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_quantity(value):
+    text = as_text(value)
+    if text is None:
+        return None
+
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([A-Za-z]+)?", text)
+    if not match:
+        return None
+
+    number = float(match.group(1))
+    suffix = match.group(2) or ""
+    factors = {
+        "": 1.0,
+        "n": 0.000000001,
+        "u": 0.000001,
+        "m": 0.001,
+        "Ki": 1024.0,
+        "Mi": 1024.0**2,
+        "Gi": 1024.0**3,
+        "Ti": 1024.0**4,
+        "Pi": 1024.0**5,
+        "Ei": 1024.0**6,
+        "K": 1000.0,
+        "M": 1000.0**2,
+        "G": 1000.0**3,
+        "T": 1000.0**4,
+        "P": 1000.0**5,
+        "E": 1000.0**6,
+    }
+    factor = factors.get(suffix)
+    if factor is None:
+        return None
+    return number * factor
+
+
+def ratio_value(used, hard):
+    used_value = parse_quantity(used)
+    hard_value = parse_quantity(hard)
+    if used_value is None or hard_value in (None, 0):
+        return None
+    return used_value / hard_value
+
+
 def infer_provider(cluster_name):
     lowered = (cluster_name or "").lower()
     for token in ("aks", "eks", "gke", "oke", "k3s", "kind", "minikube"):
@@ -245,6 +307,10 @@ services_doc = load("services.json")
 network_policies_doc = load("networkpolicies.json")
 role_bindings_doc = load("rolebindings.json")
 roles_doc = load("roles.json")
+horizontal_pod_autoscalers_doc = load("hpas.json")
+pod_disruption_budgets_doc = load("poddisruptionbudgets.json")
+resource_quotas_doc = load("resourcequotas.json")
+limit_ranges_doc = load("limitranges.json")
 deployments_doc = load("deployments.json")
 statefulsets_doc = load("statefulsets.json")
 daemonsets_doc = load("daemonsets.json")
@@ -292,6 +358,144 @@ for policy in items(network_policies_doc):
         {
             "namespace": metadata.get("namespace"),
             "name": metadata.get("name"),
+        }
+    )
+
+
+def hpa_current_cpu_utilization(hpa_status):
+    current_cpu = hpa_status.get("currentCPUUtilizationPercentage")
+    if current_cpu is not None:
+        return as_int(current_cpu)
+
+    for metric in hpa_status.get("currentMetrics") or []:
+        resource = (metric or {}).get("resource") or {}
+        if str(resource.get("name") or "").strip().lower() != "cpu":
+            continue
+        current = resource.get("current") or {}
+        utilization = current.get("averageUtilization")
+        if utilization is not None:
+            return as_int(utilization)
+    return None
+
+
+def hpa_target_cpu_utilization(hpa_spec):
+    target_cpu = hpa_spec.get("targetCPUUtilizationPercentage")
+    if target_cpu is not None:
+        return as_int(target_cpu)
+
+    for metric in hpa_spec.get("metrics") or []:
+        resource = (metric or {}).get("resource") or {}
+        if str(resource.get("name") or "").strip().lower() != "cpu":
+            continue
+        target = resource.get("target") or {}
+        if str(target.get("type") or "").strip().lower() != "utilization":
+            continue
+        utilization = target.get("averageUtilization")
+        if utilization is not None:
+            return as_int(utilization)
+    return None
+
+
+hpa_state = []
+for hpa in items(horizontal_pod_autoscalers_doc):
+    metadata = hpa.get("metadata") or {}
+    spec = hpa.get("spec") or {}
+    status = hpa.get("status") or {}
+    scale_target_ref = spec.get("scaleTargetRef") or {}
+    hpa_state.append(
+        {
+            "namespace": metadata.get("namespace"),
+            "name": metadata.get("name"),
+            "scale_target_kind": scale_target_ref.get("kind"),
+            "scale_target_name": scale_target_ref.get("name"),
+            "min_replicas": as_int(spec.get("minReplicas")),
+            "max_replicas": as_int(spec.get("maxReplicas")),
+            "current_replicas": as_int(status.get("currentReplicas")),
+            "desired_replicas": as_int(status.get("desiredReplicas")),
+            "current_cpu_utilization_percentage": hpa_current_cpu_utilization(status),
+            "target_cpu_utilization_percentage": hpa_target_cpu_utilization(spec),
+            "conditions": [
+                {
+                    "type": condition.get("type"),
+                    "status": condition.get("status"),
+                    "reason": condition.get("reason"),
+                    "message": condition.get("message"),
+                }
+                for condition in status.get("conditions") or []
+            ],
+        }
+    )
+
+
+pdb_state = []
+for pdb in items(pod_disruption_budgets_doc):
+    metadata = pdb.get("metadata") or {}
+    spec = pdb.get("spec") or {}
+    status = pdb.get("status") or {}
+    min_available = spec.get("minAvailable")
+    max_unavailable = spec.get("maxUnavailable")
+    pdb_state.append(
+        {
+            "namespace": metadata.get("namespace"),
+            "name": metadata.get("name"),
+            "min_available": as_text(min_available),
+            "max_unavailable": as_text(max_unavailable),
+            "current_healthy": as_int(status.get("currentHealthy")),
+            "desired_healthy": as_int(status.get("desiredHealthy")),
+            "disruptions_allowed": as_int(status.get("disruptionsAllowed")),
+            "expected_pods": as_int(status.get("expectedPods")),
+        }
+    )
+
+
+resource_quota_state = []
+for resource_quota in items(resource_quotas_doc):
+    metadata = resource_quota.get("metadata") or {}
+    status = resource_quota.get("status") or {}
+    hard = status.get("hard") or {}
+    used = status.get("used") or {}
+    resources = []
+    for resource_name in sorted(set(hard) | set(used)):
+        hard_value = as_text(hard.get(resource_name))
+        used_value = as_text(used.get(resource_name))
+        resources.append(
+            {
+                "resource": resource_name,
+                "hard": hard_value,
+                "used": used_value,
+                "used_ratio": ratio_value(used_value, hard_value),
+            }
+        )
+
+    resource_quota_state.append(
+        {
+            "namespace": metadata.get("namespace"),
+            "name": metadata.get("name"),
+            "resources": resources,
+        }
+    )
+
+
+limit_range_state = []
+for limit_range in items(limit_ranges_doc):
+    metadata = limit_range.get("metadata") or {}
+    spec = limit_range.get("spec") or {}
+    has_default_requests = False
+    has_default_limits = False
+    for limit in spec.get("limits") or []:
+        if not has_default_requests and (limit.get("defaultRequest") or {}):
+            has_default_requests = True
+        if not has_default_limits and (limit.get("default") or {}):
+            has_default_limits = True
+        if has_default_requests and has_default_limits:
+            break
+
+    limit_range_state.append(
+        {
+            "namespace": metadata.get("namespace"),
+            "name": metadata.get("name"),
+            "has_default_requests": has_default_requests,
+            "has_default_limits": has_default_limits,
         }
     )
 
@@ -639,6 +843,30 @@ documents = [
         "kind": "node-health",
         "media_type": "application/json",
         "content": json.dumps(sorted(node_health, key=lambda row: (row.get("name") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "autoscaling/horizontal-pod-autoscalers.json",
+        "kind": "horizontal-pod-autoscalers",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(hpa_state, key=lambda row: (row.get("namespace") or "", row.get("name") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "policy/pod-disruption-budgets.json",
+        "kind": "pod-disruption-budgets",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(pdb_state, key=lambda row: (row.get("namespace") or "", row.get("name") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "quotas/resource-quotas.json",
+        "kind": "resource-quotas",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(resource_quota_state, key=lambda row: (row.get("namespace") or "", row.get("name") or "")), separators=(",", ":")),
+    },
+    {
+        "path": "quotas/limit-ranges.json",
+        "kind": "limit-ranges",
+        "media_type": "application/json",
+        "content": json.dumps(sorted(limit_range_state, key=lambda row: (row.get("namespace") or "", row.get("name") or "")), separators=(",", ":")),
     },
     {
         "path": "events/warning-events.json",
