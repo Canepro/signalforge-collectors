@@ -27,7 +27,7 @@ Good fits:
 ## Features
 
 - **Linux host audit**: System identity, networking, users, SSH config, firewall rules, installed packages, disk and memory usage, running services, and recent errors
-- **Container diagnostics**: Runtime, identity, ports, privilege signals, mounts, secrets, and root filesystem posture for one container
+- **Container diagnostics**: Runtime, identity, state, health, restart/OOM signals, bounded CPU and memory snapshots, ports, privilege signals, mounts, secrets, and root filesystem posture for one container
 - **Kubernetes bundle export**: Normalized `kubernetes-bundle.v1` manifest built from `kubectl` JSON
 - **Push-first submission**: One wrapper for multipart upload and ingestion metadata
 - **Differential analysis**: Compare Linux audit snapshots to highlight changes

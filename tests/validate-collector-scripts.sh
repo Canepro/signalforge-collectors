@@ -23,13 +23,24 @@ if [[ "${1:-}" == "inspect" && "${2:-}" == "payments-api" ]]; then
       "Image": "ghcr.io/acme/payments:latest",
       "User": ""
     },
+    "RestartCount": 4,
     "HostConfig": {
       "Privileged": true,
       "NetworkMode": "host",
       "PidMode": "host",
       "CapAdd": ["NET_ADMIN", "SYS_ADMIN"],
+      "Memory": 0,
+      "MemoryReservation": 134217728,
       "ReadonlyRootfs": false,
       "SecurityOpt": []
+    },
+    "State": {
+      "Status": "restarting",
+      "OOMKilled": true,
+      "ExitCode": 137,
+      "Health": {
+        "Status": "unhealthy"
+      }
     },
     "Mounts": [
       {
@@ -66,6 +77,21 @@ if [[ "${1:-}" == "inspect" && "${2:-}" == "payments-api" ]]; then
 JSON
   exit 0
 fi
+if [[ "${1:-}" == "stats" && "${2:-}" == "--no-stream" && "${3:-}" == "--format" && "${4:-}" == "json" && "${5:-}" == "payments-api" ]]; then
+  cat <<'JSON'
+[
+  {
+    "id": "abcdef123456",
+    "name": "payments-api",
+    "cpu_percent": "97.40%",
+    "mem_usage": "421.0MB / 512.0MB",
+    "mem_percent": "82.20%",
+    "pids": "27"
+  }
+]
+JSON
+  exit 0
+fi
 echo "unexpected podman invocation: $*" >&2
 exit 1
 EOF
@@ -80,12 +106,22 @@ PATH="$TMP_DIR:$PATH" ./collect-container-diagnostics.sh \
 grep -q '^=== container-diagnostics ===$' "$TMP_DIR/container.txt"
 grep -q '^runtime: podman$' "$TMP_DIR/container.txt"
 grep -q '^container_name: payments-api$' "$TMP_DIR/container.txt"
+grep -q '^state_status: restarting$' "$TMP_DIR/container.txt"
+grep -q '^health_status: unhealthy$' "$TMP_DIR/container.txt"
+grep -q '^restart_count: 4$' "$TMP_DIR/container.txt"
+grep -q '^oom_killed: true$' "$TMP_DIR/container.txt"
+grep -q '^exit_code: 137$' "$TMP_DIR/container.txt"
 grep -q '^published_ports: 8080:8080/tcp$' "$TMP_DIR/container.txt"
 grep -q '^privileged: true$' "$TMP_DIR/container.txt"
 grep -q '^host_network: true$' "$TMP_DIR/container.txt"
 grep -q '^host_pid: true$' "$TMP_DIR/container.txt"
 grep -q '^added_capabilities: NET_ADMIN, SYS_ADMIN$' "$TMP_DIR/container.txt"
 grep -q '^secrets: /run/secrets/payments$' "$TMP_DIR/container.txt"
+grep -q '^memory_limit_bytes: 0$' "$TMP_DIR/container.txt"
+grep -q '^memory_reservation_bytes: 134217728$' "$TMP_DIR/container.txt"
+grep -q '^cpu_percent: 97.40$' "$TMP_DIR/container.txt"
+grep -q '^memory_percent: 82.20$' "$TMP_DIR/container.txt"
+grep -q '^pid_count: 27$' "$TMP_DIR/container.txt"
 
 cat >"$TMP_DIR/kubectl" <<'EOF'
 #!/usr/bin/env bash
