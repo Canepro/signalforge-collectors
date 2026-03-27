@@ -207,14 +207,15 @@ if [[ -z "$OUTPUT_PATH" ]]; then
   OUTPUT_PATH="./${BASE_NAME}"
 fi
 
-python3 - "$TMP_DIR" "$SCOPE" "$NAMESPACE" "$CLUSTER_NAME" "$PROVIDER" "$OUTPUT_PATH" "$COLLECTOR_VERSION" "$KUBECTL_CONTEXT" <<'PY'
+python3 - "$TMP_DIR" "$SCOPE" "$NAMESPACE" "$CLUSTER_NAME" "$PROVIDER" "$OUTPUT_PATH" "$COLLECTOR_VERSION" "$KUBECTL_CONTEXT" "$KUBECTL_BIN" <<'PY'
 import json
 import os
+import subprocess
 import sys
 import re
 from datetime import datetime, timezone
 
-tmp_dir, scope_level, namespace, cluster_name_arg, provider_arg, output_path, collector_version, explicit_context = sys.argv[1:]
+tmp_dir, scope_level, namespace, cluster_name_arg, provider_arg, output_path, collector_version, explicit_context, kubectl_bin = sys.argv[1:]
 
 
 def load(name):
@@ -251,6 +252,22 @@ def as_int(value):
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def log_priority(reason, restarts):
+    if reason == "CrashLoopBackOff":
+        return 100
+    if reason == "OOMKilled":
+        return 90
+    if reason in {"ContainerCannotRun", "RunContainerError", "CreateContainerError", "CreateContainerConfigError", "StartError"}:
+        return 80
+    if reason == "Error":
+        return 70
+    if restarts >= 3:
+        return 60
+    if restarts > 0:
+        return 40
+    return 0
 
 
 def parse_quantity(value):
@@ -838,7 +855,107 @@ def status_rank(value):
     return 0
 
 
+def log_excerpt_candidates(pod, workload_kind, workload_name):
+    metadata = pod.get("metadata") or {}
+    status = pod.get("status") or {}
+    namespace_value = metadata.get("namespace")
+    pod_name = metadata.get("name")
+    if not namespace_value or not pod_name:
+        return []
+
+    candidates = []
+    for container_status in status.get("containerStatuses") or []:
+        container_name = as_text(container_status.get("name"))
+        if container_name is None:
+            continue
+
+        restart_count = int(container_status.get("restartCount") or 0)
+        state = container_status.get("state") or {}
+        waiting = state.get("waiting") or {}
+        terminated = state.get("terminated") or {}
+        last_state = container_status.get("lastState") or {}
+        last_terminated = last_state.get("terminated") or {}
+
+        waiting_reason = as_text(waiting.get("reason"))
+        terminated_reason = as_text(terminated.get("reason"))
+        previous_reason = as_text(last_terminated.get("reason"))
+        reason = waiting_reason or terminated_reason or previous_reason or ("restart-loop" if restart_count > 0 else None)
+        if reason is None:
+            continue
+        if waiting_reason in {"ImagePullBackOff", "ErrImagePull", "ContainerCreating", "PodInitializing"}:
+            continue
+
+        capture_previous = bool(previous_reason or terminated_reason or waiting_reason == "CrashLoopBackOff" or restart_count > 0)
+        priority = log_priority(reason, restart_count)
+        if priority <= 0:
+            continue
+
+        candidates.append(
+            {
+                "namespace": namespace_value,
+                "pod_name": pod_name,
+                "container_name": container_name,
+                "workload_kind": workload_kind,
+                "workload_name": workload_name,
+                "reason": reason,
+                "restarts": restart_count,
+                "priority": priority,
+                "previous": capture_previous,
+            }
+        )
+
+    return candidates
+
+
+def run_kubectl_logs(namespace_value, pod_name, container_name, previous):
+    command = [kubectl_bin]
+    if explicit_context:
+        command.extend(["--context", explicit_context])
+    command.extend(
+        [
+            "logs",
+            "-n",
+            namespace_value,
+            pod_name,
+            "-c",
+            container_name,
+            "--tail",
+            "40",
+            "--timestamps",
+        ]
+    )
+    if previous:
+        command.append("--previous")
+
+    result = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+
+    raw_lines = [line.rstrip() for line in result.stdout.splitlines() if line.strip()]
+    if not raw_lines:
+        return None
+
+    normalized_lines = []
+    for line in raw_lines[-24:]:
+        if len(line) > 240:
+            normalized_lines.append(f"{line[:237]}...")
+        else:
+            normalized_lines.append(line)
+
+    return {
+        "excerpt_lines": normalized_lines,
+        "line_count": len(raw_lines),
+        "truncated": len(raw_lines) > len(normalized_lines),
+    }
+
+
 workload_status = {}
+log_candidates = []
 for pod in items(pods_doc):
     metadata = pod.get("metadata") or {}
     namespace_value = metadata.get("namespace")
@@ -865,12 +982,65 @@ for pod in items(pods_doc):
     }
     if current is None:
         workload_status[key] = candidate
-        continue
-    if status_rank(candidate["status"]) > status_rank(current["status"]):
+    elif status_rank(candidate["status"]) > status_rank(current["status"]):
         workload_status[key] = candidate
-        continue
-    if candidate["status"] == current["status"] and candidate["restarts"] > current["restarts"]:
+    elif candidate["status"] == current["status"] and candidate["restarts"] > current["restarts"]:
         workload_status[key] = candidate
+
+    log_candidates.extend(log_excerpt_candidates(pod, owner_kind, owner_name))
+
+unhealthy_workload_log_excerpts = []
+seen_log_keys = set()
+for candidate in sorted(log_candidates, key=lambda row: (-row["priority"], -(row["restarts"] or 0), row["namespace"], row["pod_name"], row["container_name"]))[:6]:
+    key = (
+        candidate["namespace"],
+        candidate["pod_name"],
+        candidate["container_name"],
+        candidate["previous"],
+        candidate["reason"],
+    )
+    if key in seen_log_keys:
+        continue
+
+    excerpt = run_kubectl_logs(
+        candidate["namespace"],
+        candidate["pod_name"],
+        candidate["container_name"],
+        candidate["previous"],
+    )
+    if excerpt is None and candidate["previous"]:
+        excerpt = run_kubectl_logs(
+            candidate["namespace"],
+            candidate["pod_name"],
+            candidate["container_name"],
+            False,
+        )
+        candidate = {**candidate, "previous": False}
+    if excerpt is None:
+        continue
+
+    unhealthy_workload_log_excerpts.append(
+        {
+            "namespace": candidate["namespace"],
+            "workload_kind": candidate["workload_kind"],
+            "workload_name": candidate["workload_name"],
+            "pod_name": candidate["pod_name"],
+            "container_name": candidate["container_name"],
+            "reason": candidate["reason"],
+            "restarts": candidate["restarts"],
+            "previous": candidate["previous"],
+            **excerpt,
+        }
+    )
+    seen_log_keys.add(
+        (
+            candidate["namespace"],
+            candidate["pod_name"],
+            candidate["container_name"],
+            candidate["previous"],
+            candidate["reason"],
+        )
+    )
 
 documents = [
     {
@@ -952,6 +1122,25 @@ documents = [
                     row.get("involved_kind") or "",
                     row.get("involved_name") or "",
                     row.get("reason") or "",
+                ),
+            ),
+            separators=(",", ":"),
+        ),
+    },
+    {
+        "path": "logs/unhealthy-workload-excerpts.json",
+        "kind": "unhealthy-workload-log-excerpts",
+        "media_type": "application/json",
+        "content": json.dumps(
+            sorted(
+                unhealthy_workload_log_excerpts,
+                key=lambda row: (
+                    row.get("namespace") or "",
+                    row.get("workload_kind") or "",
+                    row.get("workload_name") or "",
+                    row.get("pod_name") or "",
+                    row.get("container_name") or "",
+                    "1" if row.get("previous") else "0",
                 ),
             ),
             separators=(",", ":"),

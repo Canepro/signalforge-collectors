@@ -92,6 +92,20 @@ if [[ "${1:-}" == "stats" && "${2:-}" == "--no-stream" && "${3:-}" == "--format"
 JSON
   exit 0
 fi
+if [[ "${1:-}" == "logs" && "${2:-}" == "--tail" && "${3:-}" == "40" && "${4:-}" == "--timestamps" && "${5:-}" == "payments-api" ]]; then
+  cat <<'LOG'
+2026-03-26T10:06:00Z retrying database connection
+2026-03-26T10:06:01Z health probe still failing
+LOG
+  exit 0
+fi
+if [[ "${1:-}" == "logs" && "${2:-}" == "--tail" && "${3:-}" == "40" && "${4:-}" == "--timestamps" && "${5:-}" == "--previous" && "${6:-}" == "payments-api" ]]; then
+  cat <<'LOG'
+2026-03-26T10:05:10Z panic: database connection refused
+2026-03-26T10:05:11Z retry budget exhausted after 5 attempts
+LOG
+  exit 0
+fi
 echo "unexpected podman invocation: $*" >&2
 exit 1
 EOF
@@ -122,6 +136,26 @@ grep -q '^memory_reservation_bytes: 134217728$' "$TMP_DIR/container.txt"
 grep -q '^cpu_percent: 97.40$' "$TMP_DIR/container.txt"
 grep -q '^memory_percent: 82.20$' "$TMP_DIR/container.txt"
 grep -q '^pid_count: 27$' "$TMP_DIR/container.txt"
+python3 - "$TMP_DIR/container.txt" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    lines = handle.read().splitlines()
+
+payload = next(
+    line.split(": ", 1)[1]
+    for line in lines
+    if line.startswith("failure_log_excerpts_json: ")
+)
+entries = json.loads(payload)
+assert len(entries) == 2
+assert entries[0]["source"] == "current"
+assert entries[0]["reason"] == "restarting"
+assert entries[0]["excerpt_lines"][0].endswith("retrying database connection")
+assert entries[1]["source"] == "previous"
+assert entries[1]["excerpt_lines"][0].endswith("panic: database connection refused")
+PY
 
 cat >"$TMP_DIR/kubectl" <<'EOF'
 #!/usr/bin/env bash
@@ -227,12 +261,18 @@ EOF_TOP_PODS
 aks-system-000001 1850m 92% 14900Mi 91%
 EOF_TOP_NODES
     ;;
+  '--context prod-eu-1 logs -n payments payments-api-abc123 -c api --tail 40 --timestamps --previous')
+    cat <<'EOF_LOGS'
+2026-03-26T10:05:10Z panic: database connection refused
+2026-03-26T10:05:11Z retry budget exhausted after 5 attempts
+EOF_LOGS
+    ;;
   '--context prod-eu-1 get statefulsets -n payments -o json'|'--context prod-eu-1 get daemonsets -n payments -o json'|'--context prod-eu-1 get jobs -n payments -o json'|'--context prod-eu-1 get cronjobs -n payments -o json')
     printf '%s\n' '{"items":[]}'
     ;;
   '--context prod-eu-1 get pods -n payments -o json')
     cat <<'JSON'
-{"items":[{"metadata":{"namespace":"payments","name":"payments-api-abc123","ownerReferences":[{"kind":"ReplicaSet","name":"payments-api-67d8f7"}]},"status":{"phase":"Running","containerStatuses":[{"restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}}]}
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api-abc123","ownerReferences":[{"kind":"ReplicaSet","name":"payments-api-67d8f7"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}}]}
 JSON
     ;;
   '--context prod-eu-1 get replicasets -n payments -o json')
@@ -331,7 +371,7 @@ EOF_TOP_NODES
     ;;
   'get pods -n payments -o json')
     cat <<'JSON'
-{"items":[{"metadata":{"namespace":"payments","name":"payments-api-abc123","ownerReferences":[{"kind":"ReplicaSet","name":"payments-api-67d8f7"}]},"status":{"phase":"Running","containerStatuses":[{"restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}}]}
+{"items":[{"metadata":{"namespace":"payments","name":"payments-api-abc123","ownerReferences":[{"kind":"ReplicaSet","name":"payments-api-67d8f7"}]},"status":{"phase":"Running","containerStatuses":[{"name":"api","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}}]}
 JSON
     ;;
   'get replicasets -n payments -o json')
@@ -376,6 +416,7 @@ assert "rbac-bindings" in kinds
 assert "rbac-roles" in kinds
 assert "node-health" in kinds
 assert "warning-events" in kinds
+assert "unhealthy-workload-log-excerpts" in kinds
 assert "pod-top" in kinds
 assert "node-top" in kinds
 assert "workload-specs" in kinds
@@ -401,6 +442,12 @@ assert docs["node-health"][0]["ready"] is False
 assert docs["node-health"][0]["pressure_conditions"] == ["MemoryPressure"]
 assert docs["warning-events"][0]["reason"] == "FailedScheduling"
 assert docs["warning-events"][1]["reason"] == "ImagePullBackOff"
+assert docs["unhealthy-workload-log-excerpts"][0]["workload_kind"] == "Deployment"
+assert docs["unhealthy-workload-log-excerpts"][0]["workload_name"] == "payments-api"
+assert docs["unhealthy-workload-log-excerpts"][0]["pod_name"] == "payments-api-abc123"
+assert docs["unhealthy-workload-log-excerpts"][0]["container_name"] == "api"
+assert docs["unhealthy-workload-log-excerpts"][0]["previous"] is True
+assert docs["unhealthy-workload-log-excerpts"][0]["excerpt_lines"][0].endswith("panic: database connection refused")
 assert docs["persistent-volume-claims"][0]["name"] == "payments-data"
 assert docs["persistent-volume-claims"][0]["bound"] is True
 assert docs["persistent-volume-claims"][0]["requested_storage"] == "20Gi"

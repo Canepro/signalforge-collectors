@@ -118,14 +118,16 @@ case "$RUNTIME_CMD" in
     ;;
 esac
 
-INSPECT_JSON="$INSPECT_JSON" STATS_JSON="$STATS_JSON" python3 - "$RUNTIME_CMD" "$HOST_LABEL" "$OUTPUT_PATH" <<'PY'
+INSPECT_JSON="$INSPECT_JSON" STATS_JSON="$STATS_JSON" python3 - "$RUNTIME_CMD" "$CONTAINER_REF" "$HOST_LABEL" "$OUTPUT_PATH" <<'PY'
 import json
 import os
+import subprocess
 import sys
 
 runtime = sys.argv[1]
-hostname = sys.argv[2]
-output_path = sys.argv[3]
+container_ref = sys.argv[2]
+hostname = sys.argv[3]
+output_path = sys.argv[4]
 raw = os.environ.get("INSPECT_JSON", "")
 raw_stats = os.environ.get("STATS_JSON", "")
 parsed = json.loads(raw)
@@ -206,6 +208,51 @@ def normalize_percent(value):
         return None
 
 
+def normalize_log_excerpt(raw_text):
+    lines = [line.rstrip() for line in str(raw_text or "").splitlines() if line.strip()]
+    if not lines:
+        return None
+
+    original_line_count = len(lines)
+    truncated = False
+    if len(lines) > 12:
+        lines = lines[-12:]
+        truncated = True
+
+    bounded = []
+    total_chars = 0
+    for line in lines:
+        extra = len(line) + (1 if bounded else 0)
+        if total_chars + extra > 1600:
+            remaining = max(0, 1600 - total_chars - (1 if bounded else 0))
+            if remaining > 1:
+                bounded.append(f"{line[: remaining - 1]}…")
+            truncated = True
+            break
+        bounded.append(line)
+        total_chars += extra
+
+    if not bounded:
+        return None
+
+    return {
+        "excerpt_lines": bounded,
+        "line_count": original_line_count,
+        "truncated": truncated,
+    }
+
+
+def collect_logs(previous=False):
+    command = [runtime, "logs", "--tail", "40", "--timestamps"]
+    if previous:
+        command.append("--previous")
+    command.append(container_ref)
+    result = subprocess.run(command, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    return normalize_log_excerpt(result.stdout)
+
+
 def format_mount(entry):
     mount_type = str(entry.get("Type") or "").strip().lower()
     source = str(entry.get("Source") or "").strip()
@@ -275,6 +322,37 @@ pid_count = first_int(
     stats_item.get("PIDs"),
     stats_item.get("pids"),
 )
+log_reason = None
+if state_status != "running":
+    log_reason = state_status
+elif health_status == "unhealthy":
+    log_reason = "unhealthy"
+elif restart_count >= 3:
+    log_reason = "restarting"
+elif bool(state.get("OOMKilled")):
+    log_reason = "oom_killed"
+
+log_excerpts = []
+if log_reason is not None:
+    current_logs = collect_logs(previous=False)
+    if current_logs is not None:
+        log_excerpts.append(
+            {
+                "source": "current",
+                "reason": log_reason,
+                **current_logs,
+            }
+        )
+    if restart_count > 0 or bool(state.get("OOMKilled")):
+        previous_logs = collect_logs(previous=True)
+        if previous_logs is not None:
+            log_excerpts.append(
+                {
+                    "source": "previous",
+                    "reason": log_reason,
+                    **previous_logs,
+                }
+            )
 
 name = str(item.get("Name") or "").lstrip("/")
 container_id = str(item.get("Id") or "").strip()
@@ -313,6 +391,10 @@ if memory_percent is not None:
     lines.append(f"memory_percent: {memory_percent:.2f}")
 if pid_count is not None:
     lines.append(f"pid_count: {pid_count}")
+if log_excerpts:
+    lines.append(
+        f"failure_log_excerpts_json: {json.dumps(log_excerpts, separators=(',', ':'))}"
+    )
 
 with open(output_path, "w", encoding="utf-8") as handle:
     handle.write("\n".join(lines) + "\n")
