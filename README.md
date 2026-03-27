@@ -144,6 +144,75 @@ bun run src/cli.ts once    # one job, then exit
 bun run src/cli.ts run     # poll loop
 ```
 
+### Stable Collector Input Contract
+
+For job-driven collection, treat these script inputs as the stable contract this repo accepts today.
+
+**Linux host**
+
+- collector: `./first-audit.sh`
+- typed scope: `linux_host`
+- extra per-job inputs: none
+
+This path stays intentionally unchanged. Linux host collection does not require extra job-scoped flags.
+
+**Container diagnostics**
+
+- collector: `./collect-container-diagnostics.sh`
+- typed scope: `container_target`
+- explicit inputs:
+  - `--container <container_ref>` or `SIGNALFORGE_CONTAINER_REF`
+  - optional `--runtime <docker|podman>` or `SIGNALFORGE_CONTAINER_RUNTIME`
+  - optional `--hostname <host_hint>` or `SIGNALFORGE_CONTAINER_HOSTNAME`
+
+Current recommendation: prefer explicit flags from `signalforge-agent` or another orchestrator. The environment variables remain supported as a compatibility path, not the preferred long-term operator story.
+
+**Kubernetes bundle**
+
+- collector: `./collect-kubernetes-bundle.sh`
+- typed scope: `kubernetes_scope`
+- explicit inputs:
+  - `--scope <cluster|namespace>` or `SIGNALFORGE_KUBERNETES_SCOPE`
+  - `--namespace <name>` or `SIGNALFORGE_KUBERNETES_NAMESPACE`
+  - optional `--context <name>` or `SIGNALFORGE_KUBERNETES_CONTEXT`
+  - optional `--cluster-name <name>` or `SIGNALFORGE_KUBERNETES_CLUSTER_NAME`
+  - optional `--provider <name>` or `SIGNALFORGE_KUBERNETES_PROVIDER`
+  - optional `--kubectl <path>` or `SIGNALFORGE_KUBECTL_BIN`
+
+Current recommendation: prefer explicit flags or a pinned kubeconfig-aware execution environment over relying on a mutable operator `kubectl current-context`.
+
+### Job-Driven Examples
+
+These examples show the collector-side invocation shape that the execution-plane agent is expected to drive.
+
+**Linux host**
+
+```bash
+./first-audit.sh
+```
+
+**Container diagnostics**
+
+```bash
+./collect-container-diagnostics.sh \
+  --container payments-api \
+  --runtime podman \
+  --hostname runtime-host-a
+```
+
+**Kubernetes namespace scope**
+
+```bash
+./collect-kubernetes-bundle.sh \
+  --scope namespace \
+  --namespace payments \
+  --context prod-eu-1 \
+  --cluster-name aks-prod-eu-1 \
+  --provider aks
+```
+
+The same shapes are also accepted through environment variables when flags are omitted, which is useful for compatibility, smoke tests, and service wrappers.
+
 ### Compare Audits
 
 After running multiple audits, compare them to detect changes:

@@ -148,6 +148,16 @@ assert entries[0]["reason"] == "oom_killed"
 assert entries[0]["excerpt_lines"][0].endswith("panic: database connection refused")
 PY
 
+SIGNALFORGE_CONTAINER_RUNTIME=podman \
+SIGNALFORGE_CONTAINER_REF=payments-api \
+SIGNALFORGE_CONTAINER_HOSTNAME=env-host \
+PATH="$TMP_DIR:$PATH" ./collect-container-diagnostics.sh \
+  --output "$TMP_DIR/container-env.txt"
+
+grep -q '^runtime: podman$' "$TMP_DIR/container-env.txt"
+grep -q '^container_name: payments-api$' "$TMP_DIR/container-env.txt"
+grep -q '^hostname: env-host$' "$TMP_DIR/container-env.txt"
+
 cat >"$TMP_DIR/kubectl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -461,6 +471,27 @@ assert docs["workload-rollout-status"][0]["ready_replicas"] == 1
 assert docs["workload-rollout-status"][0]["updated_replicas"] == 2
 assert docs["workload-rollout-status"][1]["name"] == "payments-worker"
 assert docs["workload-rollout-status"][1]["desired_replicas"] == 1
+PY
+
+SIGNALFORGE_KUBECTL_BIN="$TMP_DIR/kubectl" \
+SIGNALFORGE_KUBERNETES_SCOPE=namespace \
+SIGNALFORGE_KUBERNETES_NAMESPACE=payments \
+SIGNALFORGE_KUBERNETES_CONTEXT=prod-eu-1 \
+SIGNALFORGE_KUBERNETES_CLUSTER_NAME=aks-prod-explicit \
+SIGNALFORGE_KUBERNETES_PROVIDER=aks \
+./collect-kubernetes-bundle.sh --output "$TMP_DIR/kubernetes-env.json"
+
+python3 - "$TMP_DIR/kubernetes-env.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    manifest = json.load(handle)
+
+assert manifest["cluster"]["name"] == "aks-prod-explicit"
+assert manifest["cluster"]["provider"] == "aks"
+assert manifest["scope"]["level"] == "namespace"
+assert manifest["scope"]["namespace"] == "payments"
 PY
 
 SIGNALFORGE_TEST_STORAGE_FAILURES=1 PATH="$TMP_DIR:$PATH" ./collect-kubernetes-bundle.sh \
