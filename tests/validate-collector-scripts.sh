@@ -4,11 +4,24 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+bash -n first-audit.sh
 bash -n collect-container-diagnostics.sh
 bash -n collect-kubernetes-bundle.sh
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
+
+mkdir -p "$TMP_DIR/first-audit"
+(
+  cd "$TMP_DIR/first-audit"
+  bash "$ROOT/first-audit.sh" >"$TMP_DIR/first-audit.stdout" 2>&1
+)
+
+AUDIT_LOG="$(find "$TMP_DIR/first-audit" -maxdepth 1 -name 'server_audit_*.log' -print -quit)"
+test -n "$AUDIT_LOG"
+grep -q 'SignalForge Linux Audit Report' "$AUDIT_LOG"
+grep -q '^Hostname:$' "$AUDIT_LOG"
+grep -q '\[RUNNING SERVICES\]' "$AUDIT_LOG"
 
 cat >"$TMP_DIR/podman" <<'EOF'
 #!/usr/bin/env bash
