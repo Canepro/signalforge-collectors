@@ -99,7 +99,7 @@ Kubernetes collection is currently an honest push-first path. It does not imply 
 
 ```bash
 chmod +x submit-to-signalforge.sh   # once
-export SIGNALFORGE_URL=http://localhost:3000   # must match where SignalForge listens (use the app URL, e.g. :3001 if Next picked another port)
+export SIGNALFORGE_BASE_URL=http://localhost:3000   # SIGNALFORGE_URL is also accepted for backward compatibility
 ./submit-to-signalforge.sh
 # or submit an existing log without re-running the audit:
 ./submit-to-signalforge.sh --file ./server_audit_20250115_143210.log
@@ -114,7 +114,7 @@ Optional:
 
 The script runs `first-audit.sh` by default, or uploads an existing artifact with explicit metadata (`artifact_type`, `target_identifier`, `source_label`, `collector_type`, `collector_version`, `collected_at`). Linux, container, and Kubernetes collectors in this repo all reuse that same push path.
 
-See SignalForge **`docs/external-submit.md`** in that repository for field definitions. In the SignalForge UI, **Collect externally** shows a copy-paste block with your current app origin as `SIGNALFORGE_URL`.
+See SignalForge **`docs/external-submit.md`** in that repository for field definitions. In the SignalForge UI, **Collect externally** shows a copy-paste block with your current app origin as `SIGNALFORGE_BASE_URL`. The older `SIGNALFORGE_URL` name remains accepted for backward compatibility.
 
 ### Job-driven collection (via signalforge-agent)
 
@@ -130,11 +130,11 @@ The agent orchestrates the HTTP lifecycle (claim → start → collect → uploa
 - Linux host collection is the cleanest end-to-end job-driven path today
 - container collection can take an explicit target and runtime per job; `SIGNALFORGE_CONTAINER_REF` remains only as a legacy fallback
 - Kubernetes collection can take an explicit `--context` or `SIGNALFORGE_KUBERNETES_CONTEXT`, so job-driven callers do not need to rely on the ambient `kubectl current-context`
-- container image and Kubernetes-native agent deployment forms are still future packaging work, not shipped artifacts today
+- container image and Kubernetes-native agent deployment now live in the sibling `signalforge-agent` repo; this collectors repo stays focused on collector scripts and the push-submit contract
 
 ```bash
 # On the host, with signalforge-agent and signalforge-collectors both checked out:
-export SIGNALFORGE_URL=http://your-signalforge:3000
+export SIGNALFORGE_BASE_URL=http://your-signalforge:3000
 export SIGNALFORGE_AGENT_TOKEN='<token from enrollment>'
 export SIGNALFORGE_AGENT_INSTANCE_ID="$(hostname)-agent-1"
 export SIGNALFORGE_COLLECTORS_DIR=/path/to/signalforge-collectors
@@ -211,7 +211,7 @@ These examples show the collector-side invocation shape that the execution-plane
   --provider aks
 ```
 
-The same shapes are also accepted through environment variables when flags are omitted, which is useful for compatibility, smoke tests, and service wrappers.
+The same shapes are also accepted through environment variables when flags are omitted, which is useful for compatibility, smoke tests, and service wrappers. The submit wrapper also accepts env-driven `SIGNALFORGE_TARGET_ID`, `SIGNALFORGE_ARTIFACT_TYPE`, `SIGNALFORGE_SOURCE_LABEL`, `SIGNALFORGE_COLLECTOR_TYPE`, `SIGNALFORGE_COLLECTOR_VERSION`, and `SIGNALFORGE_COLLECTED_AT` values so operators can compose it cleanly in CI or host automation.
 
 ### Compare Audits
 

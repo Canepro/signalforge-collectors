@@ -20,19 +20,20 @@ readonly SCRIPT_DIR
 readonly SAK_COLLECTOR_TYPE="signalforge-collectors"
 readonly SAK_SOURCE_LABEL="signalforge-collectors:first-audit.sh"
 # Bump when this submit wrapper or advertised behavior changes (not the whole toolkit).
-readonly SAK_REFERENCE_VERSION="1.1.0"
+readonly SAK_REFERENCE_VERSION="1.2.0"
 
-BASE_URL="${SIGNALFORGE_URL:-http://localhost:3000}"
-TARGET_ID=""
+BASE_URL="${SIGNALFORGE_BASE_URL:-${SIGNALFORGE_URL:-http://localhost:3000}}"
+TARGET_ID="${SIGNALFORGE_TARGET_ID:-}"
 ARTIFACT=""
 RUN_AUDIT=1
-ARTIFACT_TYPE=""
-SOURCE_LABEL="$SAK_SOURCE_LABEL"
-COLLECTOR_TYPE="$SAK_COLLECTOR_TYPE"
-COLLECTOR_VERSION="$SAK_REFERENCE_VERSION"
+ARTIFACT_TYPE="${SIGNALFORGE_ARTIFACT_TYPE:-}"
+SOURCE_LABEL="${SIGNALFORGE_SOURCE_LABEL:-$SAK_SOURCE_LABEL}"
+COLLECTOR_TYPE="${SIGNALFORGE_COLLECTOR_TYPE:-$SAK_COLLECTOR_TYPE}"
+COLLECTOR_VERSION="${SIGNALFORGE_COLLECTOR_VERSION:-$SAK_REFERENCE_VERSION}"
+COLLECTED_AT="${SIGNALFORGE_COLLECTED_AT:-}"
 
 show_help() {
-  cat <<'EOF'
+  cat <<'EOT'
 Reference collector: capture a host audit (first-audit.sh) and push to SignalForge.
 
 Usage:
@@ -40,17 +41,25 @@ Usage:
   ./submit-to-signalforge.sh [options] --file PATH/to/artifact
 
 Options:
-  --url, -u BASE     SignalForge base URL (default: SIGNALFORGE_URL or http://localhost:3000)
+  --url, -u BASE     SignalForge base URL (default: SIGNALFORGE_BASE_URL or SIGNALFORGE_URL, then http://localhost:3000)
   --target-id ID     Optional stable target key (default: short hostname)
   --file, -f PATH    Submit an existing artifact; skip running first-audit.sh
   --artifact-type T  Optional artifact family (linux-audit-log, container-diagnostics, kubernetes-bundle)
   --source-label L   Optional human-readable source label
   --collector-type T Optional collector implementation id
   --collector-version V Optional collector version string
+  --collected-at TS  Optional ISO 8601 evidence timestamp
   -h, --help         Show this help
 
 Environment:
-  SIGNALFORGE_URL    Default base URL if --url is not passed
+  SIGNALFORGE_BASE_URL   Preferred default base URL if --url is not passed
+  SIGNALFORGE_URL        Backward-compatible default base URL
+  SIGNALFORGE_TARGET_ID
+  SIGNALFORGE_ARTIFACT_TYPE
+  SIGNALFORGE_SOURCE_LABEL
+  SIGNALFORGE_COLLECTOR_TYPE
+  SIGNALFORGE_COLLECTOR_VERSION
+  SIGNALFORGE_COLLECTED_AT
 
 Without --file, runs ./first-audit.sh in this repo directory, then uploads the newest
 server_audit_*.log written by that run.
@@ -58,7 +67,7 @@ server_audit_*.log written by that run.
 Metadata sent (multipart form fields): target_identifier, source_label, collector_type,
 collector_version, collected_at, source_type=api, optional artifact_type — see
 SignalForge docs/external-submit.md.
-EOF
+EOT
 }
 
 while [[ $# -gt 0 ]]; do
@@ -90,6 +99,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --collector-version)
       COLLECTOR_VERSION="${2:?missing value after $1}"
+      shift 2
+      ;;
+    --collected-at)
+      COLLECTED_AT="${2:?missing value after $1}"
       shift 2
       ;;
     -h|--help)
@@ -137,7 +150,9 @@ if [[ -z "$TARGET_ID" ]]; then
   TARGET_ID="$(hostname -s 2>/dev/null || hostname)"
 fi
 
-COLLECTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+if [[ -z "$COLLECTED_AT" ]]; then
+  COLLECTED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+fi
 
 echo "→ Submitting to SignalForge: $BASE_URL"
 echo "  artifact:        $ARTIFACT"
